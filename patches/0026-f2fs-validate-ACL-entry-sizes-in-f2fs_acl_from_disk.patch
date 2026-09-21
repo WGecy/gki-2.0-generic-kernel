@@ -1,4 +1,4 @@
-From 64f981dabe0188ec8451a43daf368414a0ee48ce Mon Sep 17 00:00:00 2001
+From febf9ca77f95920fa3e910ccdf5eac7e12deee21 Mon Sep 17 00:00:00 2001
 From: Zhang Cen <rollkingzzc@gmail.com>
 Date: Mon, 15 Jun 2026 15:19:54 +0800
 Subject: [PATCH 26/82] f2fs: validate ACL entry sizes in f2fs_acl_from_disk()

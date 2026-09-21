@@ -1,4 +1,4 @@
-From 1acaa6429ced0853878b9ae4d44f9eed760e934f Mon Sep 17 00:00:00 2001
+From 34b1e37494d24ff2125cda500fbc0d9955572c46 Mon Sep 17 00:00:00 2001
 From: Karl Mehltretter <kmehltretter@gmail.com>
 Date: Thu, 20 Aug 2026 00:27:12 +0200
 Subject: [PATCH 80/82] arm64: compat: Fix decrementing LDM/STM alignment

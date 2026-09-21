@@ -1,4 +1,4 @@
-From bde2456bb9b429da4a179f8a8aa63f64da7b5083 Mon Sep 17 00:00:00 2001
+From 83f0184eb426fbaa13f3fffd5b843a4cd079161a Mon Sep 17 00:00:00 2001
 From: Qingshuang Fu <fuqingshuang@kylinos.cn>
 Date: Thu, 18 Jun 2026 10:13:52 +0800
 Subject: [PATCH 29/82] irqchip/imgpdc: Fix resource leak, add missing chained

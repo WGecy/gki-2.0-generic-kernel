@@ -1,4 +1,4 @@
-From efc91ce877f5acaab99f71311ec8fe57d9c7ff61 Mon Sep 17 00:00:00 2001
+From 29d267ff30126226a91dcb576342d2493bf2a4f7 Mon Sep 17 00:00:00 2001
 From: Herman van Hazendonk <github.com@herrie.org>
 Date: Tue, 2 Jun 2026 16:09:33 +0200
 Subject: [PATCH 20/82] clk: qcom: gdsc: propagate gdsc_enable() failure for

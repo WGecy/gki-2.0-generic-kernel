@@ -1,4 +1,4 @@
-From 9ba0359f62764012c09b9e48d8df463d76f764d0 Mon Sep 17 00:00:00 2001
+From 8a8f4455b7299c0574e14017e59d09b4612ead13 Mon Sep 17 00:00:00 2001
 From: Baokun Li <libaokun@linux.alibaba.com>
 Date: Mon, 17 Aug 2026 23:18:00 +0800
 Subject: [PATCH 75/82] fuse: fix invalidate lock leak on setattr writeback

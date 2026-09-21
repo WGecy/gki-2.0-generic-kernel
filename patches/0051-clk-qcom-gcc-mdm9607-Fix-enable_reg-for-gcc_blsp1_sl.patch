@@ -1,4 +1,4 @@
-From d65acdd93e31b4b24212f342366197677845cffa Mon Sep 17 00:00:00 2001
+From df79540664a3553aa8c5036332209c25a5ed2c4c Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan@gerhold.net>
 Date: Mon, 6 Jul 2026 17:02:10 +0200
 Subject: [PATCH 51/82] clk: qcom: gcc-mdm9607: Fix enable_reg for

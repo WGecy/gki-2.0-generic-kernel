@@ -1,4 +1,4 @@
-From 5710ef73face2690a76a43575c38f653d2df570d Mon Sep 17 00:00:00 2001
+From fc06b7fc17e6e4207d3cf2ae34f7a3dd2220aaa5 Mon Sep 17 00:00:00 2001
 From: Breno Leitao <leitao@debian.org>
 Date: Tue, 9 Jun 2026 06:15:53 -0700
 Subject: [PATCH 25/82] arm64/hw_breakpoint: reject unaligned watchpoints that

@@ -1,4 +1,4 @@
-From 092d2a1207a0add3fe5100a0f1721cfde589b616 Mon Sep 17 00:00:00 2001
+From 91765e5346f910c67108ea2a48eee863a99d58ad Mon Sep 17 00:00:00 2001
 From: Zhan Xusheng <zhanxusheng@xiaomi.com>
 Date: Sat, 25 Jul 2026 16:00:04 +0800
 Subject: [PATCH 66/82] fscrypt: use the mount idmap for the owner check in

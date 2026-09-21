@@ -1,4 +1,4 @@
-From 430fb6189f36c45c1433d92748425caeea1be776 Mon Sep 17 00:00:00 2001
+From 0dfabf195e66cff3f0e0a7e248025d8ad26bf6fe Mon Sep 17 00:00:00 2001
 From: Herman van Hazendonk <github.com@herrie.org>
 Date: Tue, 2 Jun 2026 16:09:32 +0200
 Subject: [PATCH 19/82] clk: qcom: gdsc: propagate gdsc_check_status() errors

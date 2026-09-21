@@ -1,4 +1,4 @@
-From 855b438194126ea8265dc4788379c2cbb3502b97 Mon Sep 17 00:00:00 2001
+From 4e2a58853af8476a953a7ccc1777a1ebcec4b45d Mon Sep 17 00:00:00 2001
 From: Vladimir Zapolskiy <vz@kernel.org>
 Date: Mon, 29 Jun 2026 19:21:27 +0300
 Subject: [PATCH 40/82] clk: qcom: Return expected ENOMEM error on dynamic

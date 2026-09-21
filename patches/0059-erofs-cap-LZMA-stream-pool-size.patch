@@ -1,4 +1,4 @@
-From 2a5d65b43c0e23d8880023f18c3b9b050056bd17 Mon Sep 17 00:00:00 2001
+From 433e56e251103419442e321089649afbb922a71d Mon Sep 17 00:00:00 2001
 From: Michael Bommarito <michael.bommarito@gmail.com>
 Date: Tue, 14 Jul 2026 07:47:29 -0400
 Subject: [PATCH 59/82] erofs: cap LZMA stream pool size

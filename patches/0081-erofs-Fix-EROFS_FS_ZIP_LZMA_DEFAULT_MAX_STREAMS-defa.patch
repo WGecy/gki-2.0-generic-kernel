@@ -1,4 +1,4 @@
-From db151ab26eddd915f02684ffc1e6190e176d29c0 Mon Sep 17 00:00:00 2001
+From 81b47d044c44ec2da68c9211a32d9ff495c98cd6 Mon Sep 17 00:00:00 2001
 From: Geert Uytterhoeven <geert+renesas@glider.be>
 Date: Thu, 20 Aug 2026 12:00:23 +0200
 Subject: [PATCH 81/82] erofs: Fix EROFS_FS_ZIP_LZMA_DEFAULT_MAX_STREAMS

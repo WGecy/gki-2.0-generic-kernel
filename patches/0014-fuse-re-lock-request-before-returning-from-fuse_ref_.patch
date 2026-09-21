@@ -1,4 +1,4 @@
-From 4b9adb9d499ca95e7bf2396a9e865cf0ed64d539 Mon Sep 17 00:00:00 2001
+From 81fbbcd5fc7e98b3fae303e72e07e4f86f83861a Mon Sep 17 00:00:00 2001
 From: Joanne Koong <joannelkoong@gmail.com>
 Date: Mon, 18 May 2026 22:28:07 -0700
 Subject: [PATCH 14/82] fuse: re-lock request before returning from

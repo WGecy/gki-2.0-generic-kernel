@@ -1,4 +1,4 @@
-From 85619256c024b660c471a9d07dfbd6e9d35b4702 Mon Sep 17 00:00:00 2001
+From 26b29be968b51003fdc86deb268e2b5ceb4309f0 Mon Sep 17 00:00:00 2001
 From: Kemeng Shi <shikemeng@huaweicloud.com>
 Date: Thu, 2 Jul 2026 11:30:46 +0800
 Subject: [PATCH 42/82] irqchip/gic-v3-its: Fix its node leak in

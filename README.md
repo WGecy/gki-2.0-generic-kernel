@@ -1,10 +1,10 @@
-# GKI 2.0 通用内核 — 6.6.158-lts
+# GKI 2.0 通用内核 — 6.6.158
 
 面向 **GKI 2.0（android15-6.6，内核 6.6）** 设备的通用内核。
 
 - **基线**：AOSP ACK `android15-6.6` 分支 tip（commit `448c303366032107c46d39006c8127a5ca967a26`）
 - **差异**：共 **82 个补丁**（`patches/`）
-  - **3 个通用补丁**：vermagic/CRC 绕过 · 版本串 `-lts` · `SUBLEVEL = 158`
+  - **3 个通用补丁**：vermagic/CRC 绕过 · 空 `LOCALVERSION`（版本串 `6.6.158`） · `SUBLEVEL = 158`
   - **79 条回补**：从上游 stable `v6.6.143..v6.6.157` 精挑的修复
     （f2fs 16 · clk/qcom 15 · fuse 13 · GIC-v3-ITS 4 · erofs 3 · arm64 3 · selinux 2 · overlayfs 2 · 其余各 1）
 
@@ -12,7 +12,7 @@
   > 只是逐个挑 `UPSTREAM:`/`BACKPORT:` 提交）。逐条比对后，那 83 条修复里 AOSP 只挑了 4 条，
   > 故回补其余 **79** 条。
 
-- **状态**：✅ 已在真机（Qualcomm SM8750 / HyperOS）**实测开机**，`uname -r` = `6.6.158-lts`
+- **状态**：✅ 已在真机（Qualcomm SM8750 / HyperOS）**实测开机**，`uname -r` = `6.6.158`
 
 ## 三个通用补丁做什么
 
@@ -20,7 +20,7 @@
    > GKI 设备的 vendor 模块（`/vendor_dlkm`、`/system_dlkm`）在厂商的内核二进制上编译，其 vermagic
    > （形如 `6.6.118-android15-8-g<commit>-ab<salt>-4k`）与本内核不可能一致；`CONFIG_MODVERSIONS=y`
    > 还会比对符号 CRC。不改内核就无法加载它们。这是**显式、可审计地放弃该校验**，不是伪造。
-2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION="-lts"`，关闭 `LOCALVERSION_AUTO`
+2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION=""`，关闭 `LOCALVERSION_AUTO`
 3. `Makefile` — `SUBLEVEL = 158`
 
 ## 构建

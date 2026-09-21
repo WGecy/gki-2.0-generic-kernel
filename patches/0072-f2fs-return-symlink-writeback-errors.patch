@@ -1,4 +1,4 @@
-From d1b1cdf68d7002dc2ff13623760f4221c4cdb474 Mon Sep 17 00:00:00 2001
+From 36b123b269d5f1259a89689850748e1a1722861c Mon Sep 17 00:00:00 2001
 From: Wenjie Qi <qwjhust@gmail.com>
 Date: Mon, 10 Aug 2026 21:38:32 +0800
 Subject: [PATCH 72/82] f2fs: return symlink writeback errors

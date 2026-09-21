@@ -1,4 +1,4 @@
-From 4c173ec05e9cfee3f0d95ccd7d5df330dcd1da90 Mon Sep 17 00:00:00 2001
+From 6676369e04078a62a00a4d2490b5816d07568ee0 Mon Sep 17 00:00:00 2001
 From: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
 Date: Mon, 15 Jun 2026 10:43:52 -0400
 Subject: [PATCH 27/82] soc: qcom: ice: Fix race between qcom_ice_probe() and

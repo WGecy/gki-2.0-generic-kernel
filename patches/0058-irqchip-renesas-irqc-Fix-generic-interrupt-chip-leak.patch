@@ -1,4 +1,4 @@
-From f7c91d52777da4f3b25ec5951a30593804d39e42 Mon Sep 17 00:00:00 2001
+From 33f6eb86fcc45ede82ba113582e42d0695f4826f Mon Sep 17 00:00:00 2001
 From: Qingshuang Fu <fuqingshuang@kylinos.cn>
 Date: Wed, 8 Jul 2026 18:08:46 +0800
 Subject: [PATCH 58/82] irqchip/renesas-irqc: Fix generic interrupt chip leak

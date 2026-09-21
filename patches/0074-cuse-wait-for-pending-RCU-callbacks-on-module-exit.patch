@@ -1,4 +1,4 @@
-From ac86857cf7209ec7484fdb364eb93acf98db614e Mon Sep 17 00:00:00 2001
+From 8125f91ab9d6ffa3d872ad3e2f85879b2abc2171 Mon Sep 17 00:00:00 2001
 From: Baokun Li <libaokun@linux.alibaba.com>
 Date: Fri, 14 Aug 2026 21:40:15 +0800
 Subject: [PATCH 74/82] cuse: wait for pending RCU callbacks on module exit

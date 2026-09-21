@@ -1,4 +1,4 @@
-From e9424dc2a3a36b5f3f994ea9b2ccdbc17a297702 Mon Sep 17 00:00:00 2001
+From fbaa13098b83423da494cd90dee910cd47e467a0 Mon Sep 17 00:00:00 2001
 From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
 Date: Wed, 22 Jul 2026 15:46:08 +0300
 Subject: [PATCH 65/82] clk: qcom: gcc-qcm2290: don't park QUP RCGs upon

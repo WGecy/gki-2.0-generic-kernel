@@ -1,4 +1,4 @@
-From d48610733b6373feff03df1ec0cf20f9e6c825b5 Mon Sep 17 00:00:00 2001
+From f4ab3b446ccdfe976951bf96cd992120a5e0f295 Mon Sep 17 00:00:00 2001
 From: Eric Biggers <ebiggers@kernel.org>
 Date: Sat, 18 Jul 2026 20:31:20 -0700
 Subject: [PATCH 63/82] fscrypt: Add missing superblock check in

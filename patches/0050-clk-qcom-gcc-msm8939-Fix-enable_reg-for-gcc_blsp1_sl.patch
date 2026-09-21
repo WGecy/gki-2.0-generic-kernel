@@ -1,4 +1,4 @@
-From 610371c0ccbcecadd67481c26654fca46dbb51a7 Mon Sep 17 00:00:00 2001
+From 706540da93e064e7b5e62f56ced85e0209048f90 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan.gerhold@linaro.org>
 Date: Mon, 6 Jul 2026 17:02:09 +0200
 Subject: [PATCH 50/82] clk: qcom: gcc-msm8939: Fix enable_reg for

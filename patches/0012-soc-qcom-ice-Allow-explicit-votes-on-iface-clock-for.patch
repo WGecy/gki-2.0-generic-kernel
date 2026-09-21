@@ -1,4 +1,4 @@
-From 44023c47d0d01eca3caf93840e45eb066054eae7 Mon Sep 17 00:00:00 2001
+From 45f1d43f476098f4e4f6d56bb06bd93a64d8e2a1 Mon Sep 17 00:00:00 2001
 From: Harshal Dev <harshal.dev@oss.qualcomm.com>
 Date: Thu, 16 Apr 2026 17:29:19 +0530
 Subject: [PATCH 12/82] soc: qcom: ice: Allow explicit votes on 'iface' clock

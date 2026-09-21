@@ -1,4 +1,4 @@
-From 11b79e6983618a728760464a771f14f0f462a258 Mon Sep 17 00:00:00 2001
+From ae39f74726f3a2abd6899d38eaac2711cdaa25be Mon Sep 17 00:00:00 2001
 From: Zhang Tianci <zhangtianci.1997@bytedance.com>
 Date: Mon, 18 Nov 2024 18:16:00 +0800
 Subject: [PATCH 08/82] fuse: check attributes staleness on fuse_iget()

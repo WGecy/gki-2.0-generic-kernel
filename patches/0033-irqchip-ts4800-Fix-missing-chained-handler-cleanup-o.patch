@@ -1,4 +1,4 @@
-From 612da3ff017960aae7dd82b46ae80f4d3e015290 Mon Sep 17 00:00:00 2001
+From 93ff5096a2e7d4e6b5d29912430ab2caebc61992 Mon Sep 17 00:00:00 2001
 From: Qingshuang Fu <fuqingshuang@kylinos.cn>
 Date: Tue, 23 Jun 2026 09:52:11 +0800
 Subject: [PATCH 33/82] irqchip/ts4800: Fix missing chained handler cleanup on

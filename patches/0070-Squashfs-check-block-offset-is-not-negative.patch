@@ -1,4 +1,4 @@
-From 867fe6d1c8f3c715fba0abf949250070a118a621 Mon Sep 17 00:00:00 2001
+From 4affe8aa3ff7793e101752d22b2be6bef8995f30 Mon Sep 17 00:00:00 2001
 From: Phillip Lougher <phillip@squashfs.org.uk>
 Date: Fri, 7 Aug 2026 17:29:51 +0100
 Subject: [PATCH 70/82] Squashfs: check block offset is not negative

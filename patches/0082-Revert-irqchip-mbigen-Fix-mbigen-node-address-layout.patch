@@ -1,4 +1,4 @@
-From 67bd2dfcd9af21c2142708c876349af9870065e3 Mon Sep 17 00:00:00 2001
+From af6bcaad7960055ec16f99c94a5f2f632b93097f Mon Sep 17 00:00:00 2001
 From: caina <caina@uniontech.com>
 Date: Fri, 21 Aug 2026 17:17:20 +0800
 Subject: [PATCH 82/82] Revert "irqchip/mbigen: Fix mbigen node address layout"

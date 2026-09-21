@@ -1,4 +1,4 @@
-From 670cdacf987a6e2c4f6fe23badc9c38d67638d6d Mon Sep 17 00:00:00 2001
+From b7c18c122163f7be9fd95101bc5521b5ffdf6afc Mon Sep 17 00:00:00 2001
 From: Pengyu Luo <mitltlatltl@gmail.com>
 Date: Tue, 3 Mar 2026 23:01:51 +0800
 Subject: [PATCH 09/82] clk: qcom: dispcc-sc8280xp: Don't park mdp_clk_src at

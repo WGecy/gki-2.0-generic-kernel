@@ -1,4 +1,4 @@
-From f7ed9c437bbfe3d5a43ea737c6b6e3d0f277d93c Mon Sep 17 00:00:00 2001
+From 85ec36bc7871ff33232672929adbd1155700c3b0 Mon Sep 17 00:00:00 2001
 From: Mark Rutland <mark.rutland@arm.com>
 Date: Wed, 3 Jun 2026 12:06:11 +0100
 Subject: [PATCH 22/82] arm64: fpsimd: Fix type mismatch in

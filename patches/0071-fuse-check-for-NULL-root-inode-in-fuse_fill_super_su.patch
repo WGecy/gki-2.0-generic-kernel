@@ -1,4 +1,4 @@
-From a4af660452cd8f34078933eacd9fb9443bea5209 Mon Sep 17 00:00:00 2001
+From 51c205522a202bd2f4c019ca6ee9ed5ca3e946c0 Mon Sep 17 00:00:00 2001
 From: Baokun Li <libaokun@linux.alibaba.com>
 Date: Sat, 8 Aug 2026 12:13:39 +0800
 Subject: [PATCH 71/82] fuse: check for NULL root inode in

@@ -1,4 +1,4 @@
-From e2ebe251871bfab6b9b9250db4d425e59c4c5b0b Mon Sep 17 00:00:00 2001
+From 26cd6bd88a7de9a1343f247a7819c9223ea8957a Mon Sep 17 00:00:00 2001
 From: Baokun Li <libaokun@linux.alibaba.com>
 Date: Mon, 17 Aug 2026 23:18:01 +0800
 Subject: [PATCH 76/82] fuse: fix invalidate lock leak on open O_TRUNC DAX
