@@ -1,0 +1,8 @@
+out/
+*.img
+*.log
+*.o
+*.ko
+*.pem
+Image*
+__pycache__/

@@ -1,0 +1,22 @@
+From 8c9760f4be03578d1ddc949d52132816be99c215 Mon Sep 17 00:00:00 2001
+From: gki <gki@localhost>
+Date: Mon, 21 Sep 2026 20:56:29 +0800
+Subject: [PATCH 3/3] GKI: bump SUBLEVEL to 158 (version string 6.6.158-lts)
+
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index df69aaab20379..4f9110f98dd09 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 142
++SUBLEVEL = 158
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
