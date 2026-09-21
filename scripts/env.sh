@@ -1,4 +1,4 @@
-# GKI_ROOT GKI 6.6.118 构建环境
+# GKI_ROOT GKI 6.6.158 构建环境
 #   clang   : 官方 prebuilts/clang/host/linux-x86 @ main-kernel-build-2024 (clang-r510928)
 #   bison/flex/m4/pkg-config : 本地解包的 Debian 包（无 root）
 #   pahole/lz4              : 官方 kernel/prebuilts/build-tools

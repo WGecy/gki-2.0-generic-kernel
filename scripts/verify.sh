@@ -3,7 +3,7 @@
 set -euo pipefail
 GKI_ROOT=${HOME}/gki-kernel
 NEW=${1:-$GKI_ROOT/common/out/arch/arm64/boot/Image}
-STOCK=${2:-/home/tees//path/to/stock_boot.img}
+STOCK=${2:-/path/to/stock_boot.img}
 
 pick_version() { strings -a "$1" | grep -m1 "Linux version" || true; }
 pick_vermagic() { strings -a "$1" | grep -m1 -E '^6\.6\.[0-9]+.*modversions aarch64' || true; }
