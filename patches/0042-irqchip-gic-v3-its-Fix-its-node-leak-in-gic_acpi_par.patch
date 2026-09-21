@@ -1,0 +1,43 @@
+From 85619256c024b660c471a9d07dfbd6e9d35b4702 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huaweicloud.com>
+Date: Thu, 2 Jul 2026 11:30:46 +0800
+Subject: [PATCH 42/82] irqchip/gic-v3-its: Fix its node leak in
+ gic_acpi_parse_madt_its()
+
+[ Upstream commit 698a8648ca8051d34722b09b8a8088c741120ac3 ]
+
+Fix its node leak when its_probe_one() failed in
+gic_acpi_parse_madt_its().
+
+Fixes: 9585a495ac936 ("irqchip/gic-v3-its: Split allocation from initialisation of its_node")
+Signed-off-by: Kemeng Shi <shikemeng@huaweicloud.com>
+Signed-off-by: Thomas Gleixner <tglx@kernel.org>
+Reviewed-by: Radu Rendec <radu@rendec.net>
+Link: https://patch.msgid.link/20260702033050.1583-3-shikemeng@huaweicloud.com
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit 8aa8e8f5e236d9b4e5c0af8848cfa6bd829a4df7)
+(cherry picked from commit d24a0955eb158a202f0d55cd57a89f6678d75421)
+---
+ drivers/irqchip/irq-gic-v3-its.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/irqchip/irq-gic-v3-its.c b/drivers/irqchip/irq-gic-v3-its.c
+index 9c9f0f4779b1e..029bde16b7658 100644
+--- a/drivers/irqchip/irq-gic-v3-its.c
++++ b/drivers/irqchip/irq-gic-v3-its.c
+@@ -5580,9 +5580,13 @@ static int __init gic_acpi_parse_madt_its(union acpi_subtable_headers *header,
+ 	}
+ 
+ 	err = its_probe_one(its);
+-	if (!err)
+-		return 0;
++	if (err)
++		goto probe_err;
++
++	return 0;
+ 
++probe_err:
++	its_node_destroy(its);
+ node_err:
+ 	iort_deregister_domain_token(its_entry->translation_id);
+ dom_err:

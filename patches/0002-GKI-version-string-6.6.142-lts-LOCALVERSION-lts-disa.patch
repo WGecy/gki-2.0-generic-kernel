@@ -1,7 +1,7 @@
 From 929f987c130b7f734cb50af1ee12c4a1f3e9df61 Mon Sep 17 00:00:00 2001
 From: gki <gki@localhost>
 Date: Sun, 20 Sep 2026 19:21:38 +0800
-Subject: [PATCH 2/3] GKI: version string 6.6.142-lts (LOCALVERSION=-lts,
+Subject: [PATCH 02/82] GKI: version string 6.6.142-lts (LOCALVERSION=-lts,
  disable LOCALVERSION_AUTO)
 
 ---

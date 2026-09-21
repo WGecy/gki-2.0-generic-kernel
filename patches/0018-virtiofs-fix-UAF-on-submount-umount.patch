@@ -1,0 +1,55 @@
+From a1a2efa6ce8c44b3cbec1f8f9e1f74cdc460c5ee Mon Sep 17 00:00:00 2001
+From: Miklos Szeredi <mszeredi@redhat.com>
+Date: Thu, 28 May 2026 10:58:24 +0200
+Subject: [PATCH 18/82] virtiofs: fix UAF on submount umount
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+commit 06b41351779e9289e8785694ade9042ae85e41ea upstream.
+
+iput() called from fuse_release_end() can Oops if the super block has
+already been destroyed.  Normally this is prevented by waiting for
+num_waiting to go down to zero before commencing with super block shutdown.
+
+This only works, however, for the last submount instance, as the wait
+counter is per connection, not per superblock.
+
+Revert to using synchronous release requests for the auto_submounts case,
+which is virtiofs only at this time.
+
+Reported-by: Aurélien Bombo <abombo@microsoft.com>
+Reported-by: Zhihao Cheng <chengzhihao1@huawei.com>
+Cc: Greg Kurz <gkurz@redhat.com>
+Closes: https://github.com/kata-containers/kata-containers/issues/12589
+Fixes: 26e5c67deb2e ("fuse: fix livelock in synchronous file put from fuseblk workers")
+Cc: stable@vger.kernel.org
+Reviewed-by: Greg Kurz <gkurz@redhat.com>
+Signed-off-by: Miklos Szeredi <mszeredi@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit ff9b4cfd923e49b5c7581e3523cb54d0b3b7b90d)
+---
+ fs/fuse/file.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/fs/fuse/file.c b/fs/fuse/file.c
+index 359ab3553ef4d..472530ab34648 100644
+--- a/fs/fuse/file.c
++++ b/fs/fuse/file.c
+@@ -358,8 +358,15 @@ void fuse_file_release(struct inode *inode, struct fuse_file *ff,
+ 	 * Make the release synchronous if this is a fuseblk mount,
+ 	 * synchronous RELEASE is allowed (and desirable) in this case
+ 	 * because the server can be trusted not to screw up.
++	 *
++	 * Also make the release synchronous for virtio-fs (auto_submounts),
++	 * which needs it because the num_waiting mechanism to wait for all
++	 * requests before commencing with fs shutdown doesn't work if
++	 * submounts are used.
+ 	 */
+-	fuse_file_put(ra->inode, ff, ff->fm->fc->destroy, isdir);
++	fuse_file_put(ra->inode, ff,
++		      ff->fm->fc->destroy || ff->fm->fc->auto_submounts,
++		      isdir);
+ }
+ 
+ void fuse_release_common(struct file *file, bool isdir)
