@@ -1,7 +1,7 @@
 From f1ee5c1b5c32c13bad20bf521be401a960e0c296 Mon Sep 17 00:00:00 2001
 From: Christian Brauner <brauner@kernel.org>
 Date: Sun, 2 Aug 2026 20:00:43 +0200
-Subject: [PATCH 69/82] ovl: don't warn when the mount is completed from
+Subject: [PATCH 69/83] ovl: don't warn when the mount is completed from
  another user namespace
 
 commit 63981fc786daaa626cb14d9be1406f674d79f98f upstream.

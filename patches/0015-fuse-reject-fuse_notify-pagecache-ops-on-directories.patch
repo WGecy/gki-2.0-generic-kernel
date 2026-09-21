@@ -1,7 +1,7 @@
 From 6e4ccf47b3f5dbc8baa75d611fd271a320d54053 Mon Sep 17 00:00:00 2001
 From: Jann Horn <jannh@google.com>
 Date: Tue, 19 May 2026 16:29:38 +0200
-Subject: [PATCH 15/82] fuse: reject fuse_notify() pagecache ops on directories
+Subject: [PATCH 15/83] fuse: reject fuse_notify() pagecache ops on directories
 
 commit 9c954499d43aefac01c5dfb57a82b13d2dcf4b94 upstream.
 

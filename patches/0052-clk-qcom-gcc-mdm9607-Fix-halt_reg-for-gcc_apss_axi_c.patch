@@ -1,7 +1,7 @@
 From 8e6c87fe78464c547b6adcd42c9a1daaf30dcb00 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan.gerhold@linaro.org>
 Date: Mon, 6 Jul 2026 17:02:11 +0200
-Subject: [PATCH 52/82] clk: qcom: gcc-mdm9607: Fix halt_reg for
+Subject: [PATCH 52/83] clk: qcom: gcc-mdm9607: Fix halt_reg for
  gcc_apss_axi_clk
 
 commit ca7e6cc30cde4f0cbeff2e205a84bedf431e9156 upstream.

@@ -1,7 +1,7 @@
 From 75676e20e94da5145336c0b6f304304f659adda9 Mon Sep 17 00:00:00 2001
 From: Leo Yan <leo.yan@arm.com>
 Date: Thu, 2 Jul 2026 18:05:21 +0100
-Subject: [PATCH 43/82] perf: arm_spe: Make wakeup range check overflow safe
+Subject: [PATCH 43/83] perf: arm_spe: Make wakeup range check overflow safe
 
 [ Upstream commit fcc5eaea2d234162dfb8258372dd897bc2a1b862 ]
 

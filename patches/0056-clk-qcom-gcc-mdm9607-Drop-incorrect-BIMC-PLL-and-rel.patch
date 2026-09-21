@@ -1,7 +1,7 @@
 From 37212b9441f7aa7bfd669d6c40e0d0816bf48701 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan.gerhold@linaro.org>
 Date: Mon, 6 Jul 2026 17:02:15 +0200
-Subject: [PATCH 56/82] clk: qcom: gcc-mdm9607: Drop incorrect BIMC PLL and
+Subject: [PATCH 56/83] clk: qcom: gcc-mdm9607: Drop incorrect BIMC PLL and
  related clocks
 
 commit e111ddda092ad961870a634e4c9263c10a3e8485 upstream.

@@ -1,7 +1,7 @@
 From 9fdbb1c24e9f24fe809f398c3c206c43a95977ae Mon Sep 17 00:00:00 2001
 From: Chao Yu <chao@kernel.org>
 Date: Tue, 18 Aug 2026 19:28:34 +0800
-Subject: [PATCH 78/82] f2fs: fix UAF issue in f2fs_merge_page_bio()
+Subject: [PATCH 78/83] f2fs: fix UAF issue in f2fs_merge_page_bio()
 
 commit edf7e9040fc52c922db947f9c6c36f07377c52ea upstream.
 

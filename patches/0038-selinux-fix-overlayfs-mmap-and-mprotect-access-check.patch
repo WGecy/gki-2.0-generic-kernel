@@ -1,7 +1,7 @@
 From dce2a31511df109446221a6227cafc8631da662c Mon Sep 17 00:00:00 2001
 From: Paul Moore <paul@paul-moore.com>
 Date: Sat, 27 Jun 2026 14:57:20 +0800
-Subject: [PATCH 38/82] selinux: fix overlayfs mmap() and mprotect() access
+Subject: [PATCH 38/83] selinux: fix overlayfs mmap() and mprotect() access
  checks
 
 [ Upstream commit 82544d36b1729153c8aeb179e84750f0c085d3b1 ]

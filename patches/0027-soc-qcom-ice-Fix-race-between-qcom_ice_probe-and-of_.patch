@@ -1,7 +1,7 @@
 From 6676369e04078a62a00a4d2490b5816d07568ee0 Mon Sep 17 00:00:00 2001
 From: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
 Date: Mon, 15 Jun 2026 10:43:52 -0400
-Subject: [PATCH 27/82] soc: qcom: ice: Fix race between qcom_ice_probe() and
+Subject: [PATCH 27/83] soc: qcom: ice: Fix race between qcom_ice_probe() and
  of_qcom_ice_get()
 
 [ Upstream commit d922113ef91e6e7e8065e9070f349365341ba32e ]

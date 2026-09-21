@@ -1,7 +1,7 @@
 From d87de8593506f797adbd87bf0a20394b2d896d17 Mon Sep 17 00:00:00 2001
 From: Joanne Koong <joannelkoong@gmail.com>
 Date: Thu, 24 Oct 2024 10:18:01 -0700
-Subject: [PATCH 07/82] fuse: convert readdir to use folios
+Subject: [PATCH 07/83] fuse: convert readdir to use folios
 
 [ Upstream commit 02b78c7a7a0c72aee6f600a167e6adee9417ac0e ]
 

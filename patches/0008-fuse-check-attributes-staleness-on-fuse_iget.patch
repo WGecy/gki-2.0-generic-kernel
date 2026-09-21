@@ -1,7 +1,7 @@
 From ae39f74726f3a2abd6899d38eaac2711cdaa25be Mon Sep 17 00:00:00 2001
 From: Zhang Tianci <zhangtianci.1997@bytedance.com>
 Date: Mon, 18 Nov 2024 18:16:00 +0800
-Subject: [PATCH 08/82] fuse: check attributes staleness on fuse_iget()
+Subject: [PATCH 08/83] fuse: check attributes staleness on fuse_iget()
 
 [ Upstream commit 69eb56f69efb866c791cc87fd7bf62adf2ffcbb3 ]
 

@@ -1,7 +1,7 @@
 From c28345d8af1c0d955b8bf6c6f64eaf03ac818a9a Mon Sep 17 00:00:00 2001
 From: Wenjie Qi <qwjhust@gmail.com>
 Date: Fri, 3 Jul 2026 09:23:37 -0400
-Subject: [PATCH 44/82] f2fs: validate orphan inode entry count
+Subject: [PATCH 44/83] f2fs: validate orphan inode entry count
 
 [ Upstream commit 846c499a65816d13f1186e3090e825e8bb8bcb8b ]
 

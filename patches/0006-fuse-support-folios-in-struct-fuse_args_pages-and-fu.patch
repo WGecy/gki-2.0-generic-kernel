@@ -1,7 +1,7 @@
 From 009ea8433e62aa2462b265b8430820c6d7691c8d Mon Sep 17 00:00:00 2001
 From: Joanne Koong <joannelkoong@gmail.com>
 Date: Thu, 24 Oct 2024 10:17:57 -0700
-Subject: [PATCH 06/82] fuse: support folios in struct fuse_args_pages and
+Subject: [PATCH 06/83] fuse: support folios in struct fuse_args_pages and
  fuse_copy_pages()
 
 [ Upstream commit a669c2df36db5fa7a2674ec5ae10548760702f99 ]

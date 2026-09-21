@@ -1,7 +1,7 @@
 From 85278e79b3f789fb5022430ea70fcca0b117860c Mon Sep 17 00:00:00 2001
 From: Yuho Choi <dbgh9129@gmail.com>
 Date: Sun, 28 Jun 2026 18:07:23 -0400
-Subject: [PATCH 39/82] irqchip/gic-v3-its: Fix OF node reference leak
+Subject: [PATCH 39/83] irqchip/gic-v3-its: Fix OF node reference leak
 
 [ Upstream commit 2e1368a9d61bdf5502ddade004f223a5831c5b8c ]
 

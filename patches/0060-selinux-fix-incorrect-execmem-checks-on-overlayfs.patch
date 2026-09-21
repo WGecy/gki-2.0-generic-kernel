@@ -1,7 +1,7 @@
 From b05e33802738c7b98fd45adfe287b0fcad66b1b0 Mon Sep 17 00:00:00 2001
 From: Ondrej Mosnacek <omosnace@redhat.com>
 Date: Tue, 14 Jul 2026 14:57:59 +0200
-Subject: [PATCH 60/82] selinux: fix incorrect execmem checks on overlayfs
+Subject: [PATCH 60/83] selinux: fix incorrect execmem checks on overlayfs
 
 commit 9fe595fad54d4ac6a402edb3f60bec859d52cea6 upstream.
 

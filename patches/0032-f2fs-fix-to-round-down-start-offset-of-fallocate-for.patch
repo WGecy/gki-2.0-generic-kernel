@@ -1,7 +1,7 @@
 From b947edbb300ce576c4802231d1b26f8ea9e39cae Mon Sep 17 00:00:00 2001
 From: Sunmin Jeong <s_min.jeong@samsung.com>
 Date: Mon, 22 Jun 2026 14:28:17 +0900
-Subject: [PATCH 32/82] f2fs: fix to round down start offset of fallocate for
+Subject: [PATCH 32/83] f2fs: fix to round down start offset of fallocate for
  pin file
 
 commit 4275b59673eb60b02eec3997816c83f1f4b909c4 upstream.

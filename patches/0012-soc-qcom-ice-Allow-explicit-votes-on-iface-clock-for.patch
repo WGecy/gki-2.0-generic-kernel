@@ -1,7 +1,7 @@
 From 45f1d43f476098f4e4f6d56bb06bd93a64d8e2a1 Mon Sep 17 00:00:00 2001
 From: Harshal Dev <harshal.dev@oss.qualcomm.com>
 Date: Thu, 16 Apr 2026 17:29:19 +0530
-Subject: [PATCH 12/82] soc: qcom: ice: Allow explicit votes on 'iface' clock
+Subject: [PATCH 12/83] soc: qcom: ice: Allow explicit votes on 'iface' clock
  for ICE
 
 [ Upstream commit 0d5dc5818191b55e4364d04b1b898a14a2ccac38 ]

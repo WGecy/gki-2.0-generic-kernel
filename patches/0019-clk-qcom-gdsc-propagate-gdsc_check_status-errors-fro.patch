@@ -1,7 +1,7 @@
 From 0dfabf195e66cff3f0e0a7e248025d8ad26bf6fe Mon Sep 17 00:00:00 2001
 From: Herman van Hazendonk <github.com@herrie.org>
 Date: Tue, 2 Jun 2026 16:09:32 +0200
-Subject: [PATCH 19/82] clk: qcom: gdsc: propagate gdsc_check_status() errors
+Subject: [PATCH 19/83] clk: qcom: gdsc: propagate gdsc_check_status() errors
  from gdsc_poll_status
 
 [ Upstream commit d69f0c2b8d292b4890c9f0fbe184dfc26c4de86c ]

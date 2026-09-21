@@ -1,7 +1,7 @@
 From ef8ac7be11905a209a29ef6a1ac5eb1be040010b Mon Sep 17 00:00:00 2001
 From: Miklos Szeredi <mszeredi@redhat.com>
 Date: Wed, 28 Feb 2024 16:50:49 +0100
-Subject: [PATCH 05/82] fuse: use FUSE_ROOT_ID in fuse_get_root_inode()
+Subject: [PATCH 05/83] fuse: use FUSE_ROOT_ID in fuse_get_root_inode()
 
 [ Upstream commit 253e52437119719eb87293ef6852e13bb5ad0960 ]
 

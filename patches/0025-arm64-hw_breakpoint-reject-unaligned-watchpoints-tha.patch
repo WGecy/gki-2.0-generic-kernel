@@ -1,7 +1,7 @@
 From fc06b7fc17e6e4207d3cf2ae34f7a3dd2220aaa5 Mon Sep 17 00:00:00 2001
 From: Breno Leitao <leitao@debian.org>
 Date: Tue, 9 Jun 2026 06:15:53 -0700
-Subject: [PATCH 25/82] arm64/hw_breakpoint: reject unaligned watchpoints that
+Subject: [PATCH 25/83] arm64/hw_breakpoint: reject unaligned watchpoints that
  would truncate BAS
 
 [ Upstream commit 4cc70f75853bebac022334b6a86b953348072f74 ]

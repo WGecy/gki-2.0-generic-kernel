@@ -3,8 +3,9 @@
 面向 **GKI 2.0（android15-6.6，内核 6.6）** 设备的通用内核。
 
 - **基线**：AOSP ACK `android15-6.6` 分支 tip（commit `448c303366032107c46d39006c8127a5ca967a26`）
-- **差异**：共 **82 个补丁**（`patches/`）
+- **差异**：共 **83 个补丁**（`patches/`）
   - **3 个通用补丁**：vermagic/CRC 绕过 · 空 `LOCALVERSION`（版本串 `6.6.158`） · `SUBLEVEL = 158`
+  - **单片化**：`=m` → `=y`（81 项）+ 开启 ThinLTO/AutoFDO/CFI_PERMISSIVE 等（见 `patches/`）
   - **79 条回补**：从上游 stable `v6.6.143..v6.6.157` 精挑的修复
     （f2fs 16 · clk/qcom 15 · fuse 13 · GIC-v3-ITS 4 · erofs 3 · arm64 3 · selinux 2 · overlayfs 2 · 其余各 1）
 
@@ -34,7 +35,7 @@
 git clone https://android.googlesource.com/kernel/common common
 cd common
 git checkout 448c303366032107c46d39006c8127a5ca967a26    # 基线 tip
-git am /path/to/patches/*.patch                          # 82 个补丁
+git am /path/to/patches/*.patch                          # 83 个补丁
 ```
 
 ## 说明与边界

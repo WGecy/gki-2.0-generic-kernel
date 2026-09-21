@@ -1,7 +1,7 @@
 From 8dce6a398c2b1aa82b90103dd4d18e57400cd8a7 Mon Sep 17 00:00:00 2001
 From: gki <gki@localhost>
 Date: Mon, 21 Sep 2026 20:56:29 +0800
-Subject: [PATCH 03/82] GKI: bump SUBLEVEL to 158 (version string 6.6.158)
+Subject: [PATCH 03/83] GKI: bump SUBLEVEL to 158 (version string 6.6.158)
 
 ---
  Makefile | 2 +-

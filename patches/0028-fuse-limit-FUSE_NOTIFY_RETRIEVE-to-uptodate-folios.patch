@@ -1,7 +1,7 @@
 From db911230621173205645e14787faa9b7941dd4fd Mon Sep 17 00:00:00 2001
 From: Jann Horn <jannh@google.com>
 Date: Tue, 16 Jun 2026 21:00:23 +0200
-Subject: [PATCH 28/82] fuse: limit FUSE_NOTIFY_RETRIEVE to uptodate folios
+Subject: [PATCH 28/83] fuse: limit FUSE_NOTIFY_RETRIEVE to uptodate folios
 
 [ Upstream commit 4e3d1b2c48ca6c55f1e9ca7f8dccc76f120f276c ]
 

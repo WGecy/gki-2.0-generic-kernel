@@ -1,7 +1,7 @@
 From 1e8ccd5093acd75e3871ca4cc090fe9f60fdda47 Mon Sep 17 00:00:00 2001
 From: Pengpeng Hou <pengpeng@iscas.ac.cn>
 Date: Tue, 23 Jun 2026 09:55:01 +0800
-Subject: [PATCH 34/82] soc: qcom: rpmh-rsc: manage PM notifiers with devres
+Subject: [PATCH 34/83] soc: qcom: rpmh-rsc: manage PM notifiers with devres
 
 [ Upstream commit 75e918aa876440d8ad559a11d6ab87bddb1ed79a ]
 

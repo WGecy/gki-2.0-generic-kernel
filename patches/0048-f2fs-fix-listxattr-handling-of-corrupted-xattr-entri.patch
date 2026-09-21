@@ -1,7 +1,7 @@
 From 54936bed22db298f3f48c1214d6161519f1a4bcf Mon Sep 17 00:00:00 2001
 From: Keshav Verma <iganschel@gmail.com>
 Date: Fri, 3 Jul 2026 15:00:26 -0400
-Subject: [PATCH 48/82] f2fs: fix listxattr handling of corrupted xattr entries
+Subject: [PATCH 48/83] f2fs: fix listxattr handling of corrupted xattr entries
 
 [ Upstream commit 5ef5bc304f23c3fe255d4936472378dcb74d0e94 ]
 

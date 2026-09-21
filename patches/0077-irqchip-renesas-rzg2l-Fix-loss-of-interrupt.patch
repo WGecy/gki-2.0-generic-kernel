@@ -1,7 +1,7 @@
 From d9632182408eab6b579bad89e0293e4e56b96129 Mon Sep 17 00:00:00 2001
 From: Biju Das <biju.das.jz@bp.renesas.com>
 Date: Tue, 18 Aug 2026 12:09:33 +0100
-Subject: [PATCH 77/82] irqchip/renesas-rzg2l: Fix loss of interrupt
+Subject: [PATCH 77/83] irqchip/renesas-rzg2l: Fix loss of interrupt
 
 [ Upstream commit 50b10bd0c2d721ad38abd1abe3acdefb6caa0944 ]
 

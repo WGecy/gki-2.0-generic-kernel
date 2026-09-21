@@ -1,7 +1,7 @@
 From c0ba0da02c26c7f12bcfeb6b7382f2599f495bc3 Mon Sep 17 00:00:00 2001
 From: Alberto Ruiz <aruiz@redhat.com>
 Date: Wed, 8 Apr 2026 17:23:40 +0200
-Subject: [PATCH 10/82] fuse: fix device node leak in cuse_process_init_reply()
+Subject: [PATCH 10/83] fuse: fix device node leak in cuse_process_init_reply()
 
 commit 9fa4f7a53406430ee9982f2f636a15b338185122 upstream.
 

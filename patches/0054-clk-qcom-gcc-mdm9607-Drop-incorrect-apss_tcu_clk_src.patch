@@ -1,7 +1,7 @@
 From 50000e649789c5fdce81589f1e3af281cf1eae60 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan@gerhold.net>
 Date: Mon, 6 Jul 2026 17:02:13 +0200
-Subject: [PATCH 54/82] clk: qcom: gcc-mdm9607: Drop incorrect apss_tcu_clk_src
+Subject: [PATCH 54/83] clk: qcom: gcc-mdm9607: Drop incorrect apss_tcu_clk_src
 
 commit 38d06956f60675f906dc3f5b70b3b52103b86a7d upstream.
 

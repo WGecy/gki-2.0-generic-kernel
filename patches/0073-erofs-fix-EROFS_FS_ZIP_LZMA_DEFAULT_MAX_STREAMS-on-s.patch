@@ -1,7 +1,7 @@
 From bb6e08ee69b4a2a0de7496b1a94b998b82cac48b Mon Sep 17 00:00:00 2001
 From: Gao Xiang <xiang@kernel.org>
 Date: Wed, 12 Aug 2026 21:11:43 +0800
-Subject: [PATCH 73/82] erofs: fix EROFS_FS_ZIP_LZMA_DEFAULT_MAX_STREAMS on
+Subject: [PATCH 73/83] erofs: fix EROFS_FS_ZIP_LZMA_DEFAULT_MAX_STREAMS on
  some UP platforms
 
 [ Upstream commit a64d500b0078e16e9abb25baca4dee1dbc9054fc ]

@@ -47,6 +47,9 @@ make O=out ARCH=arm64 LLVM=1 gki_defconfig
 printf %s "-android15-8-gc4127a25dcf3-ab15863337" > out/localversion
 # 6) 编译
 ~/gki-kernel/build.sh        # make O=out ARCH=arm64 LLVM=1 LOCALVERSION= KCFLAGS=-D__ANDROID_COMMON_KERNEL__ -j16 Image
+# 注意：AutoFDO 需要绝对路径。build.sh 里 CLANG_AUTOFDO_PROFILE 必须指向
+#       $GKI_ROOT/common/android/gki/aarch64/afdo/kernel.afdo；
+#       O=out 构建时编译器/链接器 cwd 在 out/，用相对路径会编译失败。
 # 7) 校验
 strings out/arch/arm64/boot/Image | grep "Linux version"
 ```

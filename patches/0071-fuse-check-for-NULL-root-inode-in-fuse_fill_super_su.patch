@@ -1,7 +1,7 @@
 From 51c205522a202bd2f4c019ca6ee9ed5ca3e946c0 Mon Sep 17 00:00:00 2001
 From: Baokun Li <libaokun@linux.alibaba.com>
 Date: Sat, 8 Aug 2026 12:13:39 +0800
-Subject: [PATCH 71/82] fuse: check for NULL root inode in
+Subject: [PATCH 71/83] fuse: check for NULL root inode in
  fuse_fill_super_submount
 
 [ Upstream commit 928f659a3e3650978a5b4829cc982324f72b474b ]

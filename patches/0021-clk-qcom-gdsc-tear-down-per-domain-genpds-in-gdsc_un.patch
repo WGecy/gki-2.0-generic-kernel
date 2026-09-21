@@ -1,7 +1,7 @@
 From 3f4952b9bc8990329862e7b1b226734f297a6e90 Mon Sep 17 00:00:00 2001
 From: Herman van Hazendonk <github.com@herrie.org>
 Date: Tue, 2 Jun 2026 16:09:34 +0200
-Subject: [PATCH 21/82] clk: qcom: gdsc: tear down per-domain genpds in
+Subject: [PATCH 21/83] clk: qcom: gdsc: tear down per-domain genpds in
  gdsc_unregister()
 
 [ Upstream commit 86b23609d5e17a770d03037e53c6a443e742a6e6 ]

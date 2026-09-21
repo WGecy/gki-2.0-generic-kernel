@@ -1,7 +1,7 @@
 From b57174b21a79c262b7e4a31a8c92b8bd89c4da3b Mon Sep 17 00:00:00 2001
 From: Mark Rutland <mark.rutland@arm.com>
 Date: Wed, 3 Jun 2026 12:06:12 +0100
-Subject: [PATCH 23/82] arm64: fpsimd: Fix type mismatch in
+Subject: [PATCH 23/83] arm64: fpsimd: Fix type mismatch in
  sme_{save,load}_state()
 
 commit 247bd153905085c18ff9006cca1ccb96dfd18e7f upstream.

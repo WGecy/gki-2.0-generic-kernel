@@ -1,7 +1,7 @@
 From dbae38bbb62209937c4889f2c03a490332e89b68 Mon Sep 17 00:00:00 2001
 From: Bryam Vargas <hexlabsecurity@proton.me>
 Date: Fri, 3 Jul 2026 14:03:22 -0400
-Subject: [PATCH 45/82] f2fs: bound i_inline_xattr_size for non-inline-xattr
+Subject: [PATCH 45/83] f2fs: bound i_inline_xattr_size for non-inline-xattr
  inodes
 
 [ Upstream commit 378acf3cf19b6af6cba55e8dd1154c4e1504bae8 ]

@@ -1,7 +1,7 @@
 From 46eb577030774597a13c82fb31c28419fdd4ca6d Mon Sep 17 00:00:00 2001
 From: Phillip Varney <pbvarney@protonmail.com>
 Date: Fri, 5 Jun 2026 00:55:45 +0000
-Subject: [PATCH 24/82] clk: qcom: a53: Corrected frequency multiplier for
+Subject: [PATCH 24/83] clk: qcom: a53: Corrected frequency multiplier for
  1152MHz
 
 [ Upstream commit bb56147ea9fce98ebde1d367335ba006cba61fbd ]

@@ -1,7 +1,7 @@
 From df79540664a3553aa8c5036332209c25a5ed2c4c Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan@gerhold.net>
 Date: Mon, 6 Jul 2026 17:02:10 +0200
-Subject: [PATCH 51/82] clk: qcom: gcc-mdm9607: Fix enable_reg for
+Subject: [PATCH 51/83] clk: qcom: gcc-mdm9607: Fix enable_reg for
  gcc_blsp1_sleep_clk
 
 commit 944d0fb38cffe57a1d1ebf82c5c077bad82dcdbb upstream.

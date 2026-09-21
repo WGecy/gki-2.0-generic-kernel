@@ -1,7 +1,7 @@
 From 0db354c778f977fad1f325ae1a37b7c41e23bdaa Mon Sep 17 00:00:00 2001
 From: Kemeng Shi <shikemeng@huaweicloud.com>
 Date: Tue, 21 Jul 2026 14:32:40 +0800
-Subject: [PATCH 64/82] irqchip/gic-v3-its: Prevent leak in
+Subject: [PATCH 64/83] irqchip/gic-v3-its: Prevent leak in
  its_vpe_irq_domain_alloc()
 
 [ Upstream commit 325ff3e78c64cd619d52b99f7c8b09a3f31e1495 ]

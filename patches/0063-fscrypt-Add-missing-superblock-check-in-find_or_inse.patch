@@ -1,7 +1,7 @@
 From f4ab3b446ccdfe976951bf96cd992120a5e0f295 Mon Sep 17 00:00:00 2001
 From: Eric Biggers <ebiggers@kernel.org>
 Date: Sat, 18 Jul 2026 20:31:20 -0700
-Subject: [PATCH 63/82] fscrypt: Add missing superblock check in
+Subject: [PATCH 63/83] fscrypt: Add missing superblock check in
  find_or_insert_direct_key()
 
 commit b5fa40226e71c17847b9ff2816c6ca4133d0d994 upstream.

@@ -1,7 +1,7 @@
 From 81fbbcd5fc7e98b3fae303e72e07e4f86f83861a Mon Sep 17 00:00:00 2001
 From: Joanne Koong <joannelkoong@gmail.com>
 Date: Mon, 18 May 2026 22:28:07 -0700
-Subject: [PATCH 14/82] fuse: re-lock request before returning from
+Subject: [PATCH 14/83] fuse: re-lock request before returning from
  fuse_ref_folio()
 
 commit b5befa80fdbe287a98480effed9564712924add5 upstream.

@@ -1,7 +1,7 @@
 From 83f0184eb426fbaa13f3fffd5b843a4cd079161a Mon Sep 17 00:00:00 2001
 From: Qingshuang Fu <fuqingshuang@kylinos.cn>
 Date: Thu, 18 Jun 2026 10:13:52 +0800
-Subject: [PATCH 29/82] irqchip/imgpdc: Fix resource leak, add missing chained
+Subject: [PATCH 29/83] irqchip/imgpdc: Fix resource leak, add missing chained
  handler cleanup on remove
 
 commit 37738fdf2ab1e504d1c63ce5bc0aeb6452d8f057 upstream.

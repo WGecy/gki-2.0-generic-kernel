@@ -1,7 +1,7 @@
 From 80509d95d6d528354ab2f414e389dfc3b88b4d21 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan@gerhold.net>
 Date: Mon, 6 Jul 2026 17:02:14 +0200
-Subject: [PATCH 55/82] clk: qcom: gcc-mdm9607: Drop incorrect
+Subject: [PATCH 55/83] clk: qcom: gcc-mdm9607: Drop incorrect
  system_noc_bfdcd_clk_src
 
 commit 17784427df923a0573a7ea83f9198456ff1ec1a5 upstream.

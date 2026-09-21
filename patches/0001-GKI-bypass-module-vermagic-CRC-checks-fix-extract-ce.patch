@@ -1,7 +1,7 @@
 From 758adb4c1d9abee6ff59c5e51f26bbe85241c079 Mon Sep 17 00:00:00 2001
 From: gki <gki@localhost>
 Date: Sun, 20 Sep 2026 18:55:03 +0800
-Subject: [PATCH 01/82] GKI: bypass module vermagic+CRC checks; fix
+Subject: [PATCH 01/83] GKI: bypass module vermagic+CRC checks; fix
  extract-cert OpenSSL3 build
 
 ---

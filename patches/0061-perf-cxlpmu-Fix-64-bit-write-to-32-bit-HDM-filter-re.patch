@@ -1,7 +1,7 @@
 From f7fbbdfad20dd8988f5bf8728735608f273ece44 Mon Sep 17 00:00:00 2001
 From: Davidlohr Bueso <dave@stgolabs.net>
 Date: Wed, 15 Jul 2026 12:14:52 -0700
-Subject: [PATCH 61/82] perf/cxlpmu: Fix 64-bit write to 32-bit HDM filter
+Subject: [PATCH 61/83] perf/cxlpmu: Fix 64-bit write to 32-bit HDM filter
  register
 
 [ Upstream commit ea434e8fd3a539e9c53285b10d3c7e539e228591 ]

@@ -1,7 +1,7 @@
 From af1d1cf3310576341959dc3cf08cb683a4bffc87 Mon Sep 17 00:00:00 2001
 From: Stephan Gerhold <stephan@gerhold.net>
 Date: Mon, 6 Jul 2026 17:02:12 +0200
-Subject: [PATCH 53/82] clk: qcom: gcc-mdm9607: Increase delay for USB PHY
+Subject: [PATCH 53/83] clk: qcom: gcc-mdm9607: Increase delay for USB PHY
  reset
 
 commit c99bc8e83848358bd4a0436e4bdae5b7919babb2 upstream.

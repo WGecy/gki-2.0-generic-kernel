@@ -1,7 +1,7 @@
 From 1b4fed9798427b88a070f25fcf16a37b30c25585 Mon Sep 17 00:00:00 2001
 From: Bhargav Joshi <j.bhargav.u@gmail.com>
 Date: Sat, 20 Jun 2026 17:39:16 +0530
-Subject: [PATCH 30/82] irqchip/crossbar: Use correct index in
+Subject: [PATCH 30/83] irqchip/crossbar: Use correct index in
  crossbar_domain_free()
 
 commit 043db005a8d6932dc7d217c86307e9af0bc10ddc upstream.
