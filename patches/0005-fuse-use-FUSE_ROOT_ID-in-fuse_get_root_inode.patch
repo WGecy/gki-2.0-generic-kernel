@@ -1,0 +1,30 @@
+From 6de3a4a35e596972e2b57184574fdbb1d4bc02d2 Mon Sep 17 00:00:00 2001
+From: Miklos Szeredi <mszeredi@redhat.com>
+Date: Wed, 28 Feb 2024 16:50:49 +0100
+Subject: [PATCH 05/82] fuse: use FUSE_ROOT_ID in fuse_get_root_inode()
+
+[ Upstream commit 253e52437119719eb87293ef6852e13bb5ad0960 ]
+
+...when calling fuse_iget().
+
+Signed-off-by: Miklos Szeredi <mszeredi@redhat.com>
+Stable-dep-of: 928f659a3e36 ("fuse: check for NULL root inode in fuse_fill_super_submount")
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit 37e3f0651aa835f7dfe09d2352ba26bf79e100da)
+---
+ fs/fuse/inode.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/fuse/inode.c b/fs/fuse/inode.c
+index 5f906f033eb72..e13a52267235d 100644
+--- a/fs/fuse/inode.c
++++ b/fs/fuse/inode.c
+@@ -1152,7 +1152,7 @@ static struct inode *fuse_get_root_inode(struct super_block *sb,
+ 	attr.mode = mode;
+ 	attr.ino = FUSE_ROOT_ID;
+ 	attr.nlink = 1;
+-	inode = fuse_iget(sb, 1, 0, &attr, 0, 0);
++	inode = fuse_iget(sb, FUSE_ROOT_ID, 0, &attr, 0, 0);
+ 	if (!inode)
+ 		return NULL;
+ 

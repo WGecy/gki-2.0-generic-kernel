@@ -1,0 +1,36 @@
+From b5a6e3ae6e5ab88d8be5fc7c0e83d766dcea649e Mon Sep 17 00:00:00 2001
+From: Bhargav Joshi <j.bhargav.u@gmail.com>
+Date: Sat, 20 Jun 2026 17:39:17 +0530
+Subject: [PATCH 31/82] irqchip/crossbar: Fix parent domain resource leak
+
+[ Upstream commit a1074dd62faa6572921d387e8a21589ccea00efc ]
+
+irq_domain_alloc_irqs_parent() is called in allocate_gic_irq() but
+irq_domain_free_irqs_parent() is never called which causes a resource leak.
+
+Fix this by calling irq_domain_free_irqs_parent() in
+crossbar_domain_free().
+
+Fixes: 783d31863fb82 ("irqchip: crossbar: Convert dra7 crossbar to stacked domains")
+Signed-off-by: Bhargav Joshi <j.bhargav.u@gmail.com>
+Signed-off-by: Thomas Gleixner <tglx@kernel.org>
+Link: https://patch.msgid.link/20260620-irq-crossbar-fix-v2-2-b8e8499f468a@gmail.com
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit b508e7542d6835919077cc47f5e8e385e176d0a9)
+(cherry picked from commit c9a5c4937dc91d5cf79b00037def8cb3e93f65ca)
+---
+ drivers/irqchip/irq-crossbar.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/irqchip/irq-crossbar.c b/drivers/irqchip/irq-crossbar.c
+index 7ad159bb793fd..23b1960024b6e 100644
+--- a/drivers/irqchip/irq-crossbar.c
++++ b/drivers/irqchip/irq-crossbar.c
+@@ -168,6 +168,7 @@ static void crossbar_domain_free(struct irq_domain *domain, unsigned int virq,
+ 		irq_domain_reset_irq_data(d);
+ 	}
+ 	raw_spin_unlock(&cb->lock);
++	irq_domain_free_irqs_parent(domain, virq, nr_irqs);
+ }
+ 
+ static int crossbar_domain_translate(struct irq_domain *d,
