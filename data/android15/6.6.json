@@ -1,0 +1,20 @@
+{
+  "baseline": {
+    "repository": "https://android.googlesource.com/kernel/common",
+    "branch": "android15-6.6",
+    "commit": "448c303366032107c46d39006c8127a5ca967a26",
+    "snapshot": "2026-09",
+    "base_sub_level": "142",
+    "note": "AOSP ACK android15-6.6 分支 tip (2026-09-17), patches/ 中的 83 个补丁均基于该 commit 生成"
+  },
+  "entries": [
+    {
+      "android_version": "android15",
+      "kernel_version": "6.6",
+      "sub_level": "158",
+      "snapshot": "2026-09",
+      "baseline_commit": "448c303366032107c46d39006c8127a5ca967a26",
+      "patches": "83"
+    }
+  ]
+}

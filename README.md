@@ -69,9 +69,55 @@ git checkout 448c303366032107c46d39006c8127a5ca967a26    # 基线 tip
 git am /path/to/patches/*.patch                          # 83 个补丁
 ```
 
+## GitHub Actions 构建（ReSukiSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
+
+仓库自带一套 Actions 工作流，在 CI 里把 **ReSukiSU-Ultra（KernelSU）+ SUSFS + NoMount +
+ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出可直接刷入的 AnyKernel3 包与
+合并 Release。迁移自老内核项目 `ReSukiSU-Ultra-Kernel` 的 `kernel-android15-6-6.yml` 工作流。
+
+```
+.github/workflows/
+├── kernel-android15-6-6.yml   入口: 版本矩阵 + 调用构建 + 拉管理器 APK + 合并发布
+├── build.yml                  可复用: 拉源码 → git am patches → 集成 → 编译 → 打包
+└── get-manager.yml            拉取 ReSukiSU-Ultra 管理器 APK
+data/android15/6.6.json        版本矩阵 (含基线 commit)
+docs/feature-diff.md           新老内核功能差异表 (迁移状态 + 维护指引)
+scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + NoMount + ADIOS + Unicode 绕过 集成
+third_party/AnyKernel3/        打包模板 (迁移自老项目)
+third_party/adios/             ADIOS IO 调度器补丁 (迁移自老项目)
+third_party/fusebpf/           KSU fusebpf 内核侧补丁 (迁移自老项目, KSU_FUSEBPF_FIX 依赖)
+third_party/nomount/           NoMount hook 补丁 + nomount.c/h 源码
+third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (迁移自老项目)
+```
+
+要点：
+
+- **基线可复现**：按 `data/android15/6.6.json` 里的 `baseline_commit` 精确浅取 ACK 源码，
+  `git am patches/*.patch` 之后才开始集成；基线不一致直接失败（补丁是按该 commit 生成的）。
+- **工具链**：AOSP 预编译 `clang-r510928` + `kernel/prebuilts/build-tools`（pahole/lz4/dtc），
+  `ARCH=arm64 LLVM=1`，与 `scripts/build.sh` 完全一致；工具链走 Actions 缓存。
+- **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（KSU 仓库
+  `kernel-patches/fusebpf`，提供内核侧 `fuse_bpf_lookup_revalidate_*`）→ SUSFS（gitlab 上游
+  50_add_susfs 补丁 + 源码）→ NoMount（hook 补丁 + 源码）→ ADIOS（调度器补丁 +
+  `elevator_get_default()` 强制 adios + `elevator_change()` 拦截 `cpq`）→ Unicode 绕过
+  （改 `fs/unicode` 归一化数据表）→ defconfig 注入开关。
+- **ADIOS 锁定**：澎湃OS4（Android 17）的 `init.qti.kernel.rc` 会在每次开机把 userdata
+  调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
+  `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。
+- **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
+  `kernelsu_init`、`susfs is initialized`、`nm_rules` —— 防止“补丁打上了但没编译进去”。
+- **产物**：`android15-6.6.<sub>-<snapshot>-AnyKernel3.zip`、裸 `Image-6.6.<sub>`、
+  `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
+
+触发方式：`Actions → GKI 2.0 内核构建 - Android 15 (6.6) → Run workflow`，
+可填 KSU 仓库/分支、SUSFS 分支、自定义内核后缀、自定义构建时间。详见
+[scripts/README-ci.md](scripts/README-ci.md)；**还缺哪些老项目功能、怎么补**见
+[docs/feature-diff.md](docs/feature-diff.md)。
+
 ## 说明与边界
 
-- 不含 KSU/SUSFS —— 纯 GKI，无 root
+- 仓库内的内核树是**纯 GKI**（不含 KSU/SUSFS/NoMount/ADIOS/Unicode 绕过）；root 与隐藏能力
+  由上面这套 Actions 工作流在构建时集成，本地构建（`scripts/build.sh`）默认仍是纯 GKI。
 - 不含任何编译产物（无 Image / boot.img / .o / .ko）
 - 部分 OEM-GKI 设备的 stock 内核带厂商私有补丁（例如某些机型的 f2fs hybrid-UFS / IOSTAT 等）。
   本内核不含这些特性；实测不影响启动（vendor 模块经通用补丁 1 正常加载）。

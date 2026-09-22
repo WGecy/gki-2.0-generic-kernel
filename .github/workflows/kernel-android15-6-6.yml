@@ -1,0 +1,206 @@
+name: GKI 2.0 内核构建 - Android 15 (6.6)
+
+# 结构完全参照老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/kernel-android15-6-6.yml
+#   读取 data/android15/6.6.json 版本矩阵 → 逐个版本调用 build.yml →
+#   拉取 ReSukiSU-Ultra 管理器 APK → 合并发布到一个 Release
+# 本内核版本形态为 "ACK 基线 + patches/ 全部补丁", 因此每个矩阵项都带 baseline_commit
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "内核版本 (6.6.158 / 全部)"
+        required: true
+        type: choice
+        options:
+          - "all"
+          - "6.6.158"
+        default: "all"
+      ksu_repo:
+        description: "KernelSU 仓库 (默认 ReSukiSU-Ultra)"
+        required: false
+        type: string
+        default: "https://github.com/WGecy/ReSukiSU-Ultra"
+      ksu_branch:
+        description: "KSU 分支 (默认 main)"
+        required: false
+        type: string
+        default: "main"
+      susfs_branch:
+        description: "SUSFS 分支 (默认 gki-android15-6.6)"
+        required: false
+        type: string
+        default: "gki-android15-6.6"
+      adios_lock:
+        description: "ADIOS 调度器锁定 (cpq=只拦 cpq / all=只允许 adios / off=不拦)"
+        required: true
+        type: choice
+        options:
+          - "cpq"
+          - "all"
+          - "off"
+        default: "cpq"
+      custom_suffix:
+        description: "自定义内核后缀 (可选, 如 -test-01; 留空 = 项目默认 6.6.158)"
+        required: false
+        type: string
+        default: ""
+      build_time:
+        description: "自定义构建时间 (N 或留空 = 当前 UTC)"
+        required: false
+        type: string
+        default: "N"
+
+jobs:
+  # ==================== 读取版本矩阵 ====================
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: 读取并解析 data/android15/6.6.json 矩阵
+        id: set-matrix
+        run: |
+          set -e
+          VERSION_FILTER="${{ inputs.version }}"
+          MATRIX_JSON=$(jq -c '
+            [ .entries[] | {
+                android_version: .android_version,
+                kernel_version:  .kernel_version,
+                sub_level:       .sub_level,
+                snapshot:        .snapshot,
+                baseline_commit: .baseline_commit
+              } ]
+          ' ./data/android15/6.6.json)
+
+          # 按输入过滤版本 (6.6.158 → 158)
+          if [ "$VERSION_FILTER" != "all" ]; then
+            FILTER_SUB=$(echo "$VERSION_FILTER" | awk -F. '{print $3}')
+            MATRIX_JSON=$(echo "$MATRIX_JSON" | jq -c --arg sub "$FILTER_SUB" '[ .[] | select(.sub_level == $sub) ]')
+          fi
+
+          if [ "$MATRIX_JSON" = "[]" ]; then
+            echo "::error::版本过滤没有匹配项: $VERSION_FILTER"
+            exit 1
+          fi
+
+          echo "本次构建: $MATRIX_JSON"
+          echo "matrix=${MATRIX_JSON}" >> "$GITHUB_OUTPUT"
+
+  # ==================== 构建内核 ====================
+  build-kernels-a15-6-6:
+    needs: prepare-matrix
+    name: "6.6.${{ matrix.sub_level }}-${{ matrix.snapshot }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs['prepare-matrix'].outputs.matrix) }}
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: ${{ matrix.android_version }}
+      kernel_version: ${{ matrix.kernel_version }}
+      sub_level: ${{ matrix.sub_level }}
+      snapshot: ${{ matrix.snapshot }}
+      baseline_commit: ${{ matrix.baseline_commit }}
+      ksu_repo: ${{ inputs.ksu_repo }}
+      ksu_branch: ${{ inputs.ksu_branch }}
+      susfs_branch: ${{ inputs.susfs_branch }}
+      adios_lock: ${{ inputs.adios_lock }}
+      custom_suffix: ${{ inputs.custom_suffix }}
+      build_time: ${{ inputs.build_time }}
+
+  # ==================== 拉取管理器 APK ====================
+  get-ksu-manager:
+    uses: ./.github/workflows/get-manager.yml
+    secrets: inherit
+
+  # ==================== 合并发布 (内核 + 管理器 APK → 一个 Release) ====================
+  publish:
+    needs: [build-kernels-a15-6-6, get-ksu-manager]
+    if: always() && (needs.build-kernels-a15-6-6.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载内核产物
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 下载管理器 APK
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          name: manager-apk
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: 列出产物
+        run: ls -la dist/ || echo "dist 为空"
+
+      - name: 删除旧合并 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          # 删除 release + tag (带重试, 确保彻底删掉)
+          for i in 1 2 3; do
+            gh release delete kernel-latest --repo "$REPO" --yes --cleanup-tag 2>&1 || echo "  release 删除(第$i次): 不存在或失败"
+            gh api -X DELETE "repos/$REPO/git/refs/tags/kernel-latest" 2>&1 || echo "  tag 删除(第$i次): 不存在或失败"
+            if ! gh api "repos/$REPO/git/refs/tags/kernel-latest" >/dev/null 2>&1; then
+              echo "  tag kernel-latest 已彻底删除"
+              break
+            fi
+            sleep 5
+          done
+          sleep 3
+
+      - name: 发布合并 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_INPUT: ${{ inputs.version }}
+          CUSTOM_SUFFIX: ${{ inputs.custom_suffix }}
+        run: |
+          set -e
+          # 从产物名提取实际构建的版本 (android15-6.6.158-2026-09-AnyKernel3.zip → 6.6.158)
+          VERSIONS=$(ls dist/*.zip 2>/dev/null \
+            | xargs -r -n1 basename \
+            | sed -nE 's/^android15-([0-9]+\.[0-9]+\.[0-9]+)-.*$/\1/p' \
+            | sort -u | paste -sd, - || true)
+          REL_TITLE="GKI 2.0 通用内核 (${VERSIONS:-6.6.158} + ReSukiSU-Ultra + SUSFS + NoMount + 管理器)"
+
+          : > /tmp/notes.txt
+          printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: ReSukiSU-Ultra (KernelSU) + SUSFS + NoMount\n- ReSukiSU-Ultra 管理器 APK\n- 版本过滤: %s\n- 自定义后缀: %s\n' \
+            "$VERSION_INPUT" "${CUSTOM_SUFFIX:-无}" > /tmp/notes.txt
+          # 追加各内核的 build-info (由 build.yml 生成)
+          for f in dist/build-info*.txt; do
+            [ -f "$f" ] || continue
+            printf '\n---- %s ----\n' "$(basename "$f")" >> /tmp/notes.txt
+            cat "$f" >> /tmp/notes.txt
+          done
+          echo "---------- Release notes ----------"
+          cat /tmp/notes.txt
+
+          for i in 1 2 3 4 5; do
+            if gh release create kernel-latest dist/* \
+              --repo ${{ github.repository }} \
+              --title "$REL_TITLE" \
+              --notes-file /tmp/notes.txt; then
+              echo "合并 Release 发布成功: kernel-latest"
+              exit 0
+            fi
+            echo "发布失败(第 $i 次), 重试..."; sleep 10
+          done
+          exit 1

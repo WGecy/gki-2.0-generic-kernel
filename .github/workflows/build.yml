@@ -1,0 +1,367 @@
+# ========================================
+# GKI 2.0 通用内核 —— 核心构建工作流 (可复用)
+# 结构参照老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/build.yml:
+#   1. 环境准备
+#   2. 拉取 ACK 基线源码 (精确 commit)
+#   3. git am patches/ (基线补丁)
+#   4. 拉取 AOSP 工具链 (clang-r510928 + build-tools)
+#   5. 集成 ReSukiSU-Ultra + SUSFS + NoMount (scripts/ci-integrate.sh)
+#   6. defconfig + 编译 Image (plain make, LTO + AutoFDO, 单片内核)
+#   7. AnyKernel3 打包 + 产物上传
+# ========================================
+name: 内核构建流程 (GKI 2.0 ReSukiSU-Ultra + SUSFS + NoMount)
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  GKI_ROOT: ${{ github.workspace }}/gki-kernel
+  BASELINE_REPO: https://android.googlesource.com/kernel/common
+  BASELINE_BRANCH: android15-6.6
+  CLANG_PREBUILT_REPO: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+  BUILD_TOOLS_REPO: https://android.googlesource.com/kernel/prebuilts/build-tools
+  TOOLCHAIN_BRANCH: main-kernel-build-2024
+  CLANG_DIR: clang-r510928
+
+on:
+  workflow_call:
+    inputs:
+      android_version:
+        description: "android 版本目录 (android15)"
+        required: true
+        type: string
+      kernel_version:
+        description: "内核大版本 (6.6)"
+        required: true
+        type: string
+      sub_level:
+        description: "SUBLEVEL (158)"
+        required: true
+        type: string
+      snapshot:
+        description: "ACK 快照 (2026-09)"
+        required: true
+        type: string
+      baseline_commit:
+        description: "ACK 基线 commit (patches/ 基于该 commit 生成)"
+        required: true
+        type: string
+      ksu_repo:
+        description: "KernelSU (ReSukiSU-Ultra) 仓库"
+        required: false
+        type: string
+        default: "https://github.com/WGecy/ReSukiSU-Ultra"
+      ksu_branch:
+        description: "KernelSU 分支/标签"
+        required: false
+        type: string
+        default: "main"
+      susfs_branch:
+        description: "SUSFS 分支 (gitlab simonpunk/susfs4ksu)"
+        required: false
+        type: string
+        default: "gki-android15-6.6"
+      adios_lock:
+        description: "ADIOS 运行时切换拦截: cpq(只拦 cpq) / all(只允许 adios) / off"
+        required: false
+        type: string
+        default: "cpq"
+      custom_suffix:
+        description: "自定义内核后缀 (留空 = 项目默认 6.6.x)"
+        required: false
+        type: string
+        default: ""
+      build_time:
+        description: "自定义构建时间 (N/留空 = 当前 UTC)"
+        required: false
+        type: string
+        default: "N"
+
+jobs:
+  build-kernel:
+    name: "6.6.${{ inputs.sub_level }}-${{ inputs.snapshot }}-ReSukiSU-Ultra"
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: 构建信息摘要
+        env:
+          CUSTOM_SUFFIX: ${{ inputs.custom_suffix }}
+        run: |
+          echo "========================================"
+          echo "        GKI 2.0 通用内核构建"
+          echo "========================================"
+          echo "内核版本  : ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+          echo "ACK 基线  : ${{ inputs.baseline_commit }} (快照 ${{ inputs.snapshot }})"
+          echo "内核形态  : 单片 (monolithic) + LTO thin + AutoFDO"
+          echo "KernelSU  : ReSukiSU-Ultra @ ${{ inputs.ksu_branch }}"
+          echo "SUSFS     : ${{ inputs.susfs_branch }}"
+          echo "NoMount   : 启用"
+          echo "自定义后缀: ${CUSTOM_SUFFIX:-(无)}"
+          echo "========================================"
+
+      - name: 清理磁盘空间
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* mysql* dotnet-sdk-*"
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/microsoft /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+
+      - name: 检出代码仓库
+        uses: actions/checkout@v7
+
+      - name: 安装编译依赖
+        run: |
+          # 换源: azure.archive.ubuntu.com CDN 偶发卡死 → archive.ubuntu.com
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+            /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          # 宿主依赖: 内核 make 需要的工具 + patch/git/zip/jq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libelf-dev libssl-dev zlib1g-dev \
+            python3 git curl wget zip unzip xz-utils cpio rsync patch jq
+          # 关键工具提前确认存在 (否则要到 30 分钟后的打包步骤才报 command not found)
+          for t in make zip patch jq strings nm find xargs; do
+            command -v "$t" >/dev/null || { echo "::error::缺少必需工具: $t"; exit 1; }
+          done
+          echo "编译依赖与关键工具就绪"
+
+      # ==================== 拉取 ACK 基线源码 (精确 commit) ====================
+      - name: 拉取内核基线源码
+        env:
+          COMMIT: ${{ inputs.baseline_commit }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GKI_ROOT/common"
+          cd "$GKI_ROOT/common"
+          if [ ! -d .git ]; then
+            git init -q .
+            git remote add origin "$BASELINE_REPO"
+          fi
+          # 优先按 commit 浅取 (googlesource 支持); 失败则用快照日期附近的分支历史兜底
+          if git fetch --depth 1 origin "$COMMIT" 2>/dev/null; then
+            git checkout -q FETCH_HEAD
+          else
+            echo "::warning::按 SHA 拉取失败, 回退到 $BASELINE_BRANCH 的浅历史"
+            SINCE="$(date -u -d "${SNAPSHOT}-01 -30 days" +%Y-%m-%d)"
+            git fetch --shallow-since="$SINCE" origin "$BASELINE_BRANCH"
+            git checkout -q "$COMMIT"
+          fi
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "内核 HEAD : $ACTUAL"
+          if [ "$ACTUAL" != "$COMMIT" ]; then
+            echo "::error::基线 commit 不一致 (期望 $COMMIT, 实际 $ACTUAL); patches/ 基于该 commit 生成, 拒绝继续"
+            exit 1
+          fi
+          grep -m1 '^SUBLEVEL = ' Makefile
+
+      # ==================== 应用基线补丁 (git am) ====================
+      - name: 应用基线补丁
+        run: |
+          set -euo pipefail
+          cd "$GKI_ROOT/common"
+          git config user.email "gki-ci@localhost"
+          git config user.name "gki-ci"
+          COUNT=$(ls "$GITHUB_WORKSPACE"/patches/*.patch | wc -l)
+          echo "补丁数量: $COUNT"
+          if ! git am "$GITHUB_WORKSPACE"/patches/*.patch; then
+            echo "::error::git am 失败 —— 补丁与基线 commit 不匹配 (先确认 baseline_commit 是否正确)"
+            git am --abort || true
+            exit 1
+          fi
+          git log --oneline | head -"$((COUNT + 1))"
+          grep -m1 '^SUBLEVEL = ' Makefile
+
+      # ==================== 工具链 (缓存 + 拉取) ====================
+      - name: 缓存工具链
+        uses: actions/cache@v5
+        with:
+          path: |
+            gki-kernel/clang-prebuilt
+            gki-kernel/kbt
+          key: gki-toolchain-${{ env.TOOLCHAIN_BRANCH }}-${{ env.CLANG_DIR }}-v1
+
+      - name: 准备工具链 (AOSP prebuilt clang + build-tools)
+        run: |
+          set -euo pipefail
+          cd "$GKI_ROOT"
+          if [ ! -x "clang-prebuilt/$CLANG_DIR/bin/clang" ]; then
+            rm -rf clang-prebuilt
+            git clone --filter=blob:none --sparse -b "$TOOLCHAIN_BRANCH" "$CLANG_PREBUILT_REPO" clang-prebuilt
+            git -C clang-prebuilt sparse-checkout set "$CLANG_DIR"
+          fi
+          if [ ! -x kbt/linux-x86/bin/pahole ]; then
+            rm -rf kbt
+            git clone --filter=blob:none --sparse -b "$TOOLCHAIN_BRANCH" "$BUILD_TOOLS_REPO" kbt
+            git -C kbt sparse-checkout set linux-x86/bin linux-x86/lib64
+          fi
+          # 后续步骤统一使用该工具链与 AutoFDO profile (profile 必须绝对路径)
+          TOOL_PATH="$GKI_ROOT/clang-prebuilt/$CLANG_DIR/bin:$GKI_ROOT/kbt/linux-x86/bin"
+          TOOL_LDPATH="$GKI_ROOT/kbt/linux-x86/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          {
+            echo "PATH=$TOOL_PATH:$PATH"
+            echo "LD_LIBRARY_PATH=$TOOL_LDPATH"
+            echo "CLANG_AUTOFDO_PROFILE=$GKI_ROOT/common/android/gki/aarch64/afdo/kernel.afdo"
+          } >> "$GITHUB_ENV"
+          # 当前步骤内也要立即生效 (GITHUB_ENV 只对后续步骤生效)
+          export PATH="$TOOL_PATH:$PATH"
+          export LD_LIBRARY_PATH="$TOOL_LDPATH"
+          clang --version | head -2
+          pahole --version
+
+      # ==================== 集成 ReSukiSU-Ultra + SUSFS + NoMount ====================
+      - name: 集成 ReSukiSU-Ultra + SUSFS + NoMount
+        env:
+          ANDROID_VERSION: ${{ inputs.android_version }}
+          KERNEL_VERSION: ${{ inputs.kernel_version }}
+          KSU_REPO: ${{ inputs.ksu_repo }}
+          KSU_BRANCH: ${{ inputs.ksu_branch }}
+          SUSFS_BRANCH: ${{ inputs.susfs_branch }}
+          ADIOS_LOCK: ${{ inputs.adios_lock }}
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/ci-integrate.sh" \
+            --gki-root "$GKI_ROOT" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --android-version "$ANDROID_VERSION" \
+            --kernel-version "$KERNEL_VERSION" \
+            --ksu-repo "$KSU_REPO" \
+            --ksu-branch "$KSU_BRANCH" \
+            --susfs-branch "$SUSFS_BRANCH" \
+            --adios-lock "$ADIOS_LOCK"
+
+      # ==================== defconfig ====================
+      - name: 生成 defconfig
+        run: |
+          set -euo pipefail
+          cd "$GKI_ROOT/common"
+          make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
+            KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig
+          # 关键配置必须真正生效 (Kconfig 里没声明会被静默丢弃)
+          for c in CONFIG_KSU=y CONFIG_NOMOUNT=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_SUS_MOUNT=y \
+                   CONFIG_KSU_FUSEBPF_FIX=y CONFIG_MQ_IOSCHED_ADIOS=y CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y; do
+            grep -qx "$c" out/.config || { echo "::error::配置未生效: $c"; exit 1; }
+          done
+          # fusebpf: KSU 侧开着就必须有内核侧符号, 否则只会在链接阶段报 undefined symbol (历史教训: run 35693420939)
+          if grep -qx 'CONFIG_KSU_FUSEBPF_FIX=y' out/.config; then
+            grep -qF 'fuse_bpf_lookup_revalidate_enabled' fs/fuse/backing.c \
+              || { echo "::error::CONFIG_KSU_FUSEBPF_FIX=y 但 fs/fuse/backing.c 缺少内核侧 fusebpf 补丁 (链接会失败)"; exit 1; }
+          fi
+          # ADIOS: 配置开着就必须有 block/adios.c, 否则编译期报 unknown target
+          if grep -qx 'CONFIG_MQ_IOSCHED_ADIOS=y' out/.config; then
+            [ -f block/adios.c ] || { echo "::error::CONFIG_MQ_IOSCHED_ADIOS=y 但 block/adios.c 不存在 (ADIOS 补丁未应用)"; exit 1; }
+          fi
+          echo "KSU/fusebpf/SUSFS/NoMount/ADIOS 配置与补丁一致"
+          echo "剩余模块化配置 (=m): $(grep -c '=m$' out/.config)"
+
+      # ==================== 编译内核 ====================
+      - name: 编译内核 (Image)
+        env:
+          CUSTOM_SUFFIX: ${{ inputs.custom_suffix }}
+          BUILD_TIME: ${{ inputs.build_time }}
+        run: |
+          set -euo pipefail
+          cd "$GKI_ROOT/common"
+          if [ -n "$BUILD_TIME" ] && [ "$BUILD_TIME" != "N" ] && [ "$BUILD_TIME" != "n" ]; then
+            echo "使用自定义构建时间: $BUILD_TIME"
+            export KBUILD_BUILD_TIMESTAMP="$BUILD_TIME"
+            export KBUILD_BUILD_USER=gki
+            export KBUILD_BUILD_HOST=github-actions
+          fi
+          test -f "$CLANG_AUTOFDO_PROFILE" || { echo "::error::AutoFDO profile 缺失: $CLANG_AUTOFDO_PROFILE"; exit 1; }
+          JOBS="${JOBS:-$(nproc)}"
+          echo "并行度: -j$JOBS (LTO 构建内存占用高; 内存紧张可用 JOBS 调低)"
+          # LOCALVERSION 为空串时 setlocalversion 不会再追加 -gHASH/+/-dirty, 版本串保持 6.6.<sub_level>
+          make O=out ARCH=arm64 LLVM=1 \
+            LOCALVERSION="$CUSTOM_SUFFIX" \
+            KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
+            -j"$JOBS" Image
+
+          KREL="$(cat out/include/config/kernel.release)"
+          echo "kernel.release = $KREL"
+          test -f out/arch/arm64/boot/Image
+          ls -la out/arch/arm64/boot/Image
+          # 产物路径统一在这里导出: 后续步骤不要再手写路径 (O=out 前缀漏写曾导致打包失败)
+          {
+            echo "KERNEL_IMAGE=$PWD/out/arch/arm64/boot/Image"
+            echo "KERNEL_RELEASE=$KREL"
+            echo "KERNEL_RELEASE_FILE=$PWD/out/include/config/kernel.release"
+          } >> "$GITHUB_ENV"
+
+          # 版本串校验
+          EXPECT="6.6.${{ inputs.sub_level }}${CUSTOM_SUFFIX}"
+          if [ "$KREL" != "$EXPECT" ]; then
+            echo "::error::内核版本串不符: 期望 $EXPECT, 实际 $KREL"
+            exit 1
+          fi
+          strings out/arch/arm64/boot/Image | grep -qF "$EXPECT" || { echo "::error::Image 中未找到版本串 $EXPECT"; exit 1; }
+          echo "版本串校验通过: $KREL"
+
+          # 内建集成校验: 防止"补丁打上了但没编译进去"
+          nm out/vmlinux | grep -q 'kernelsu_init' || { echo "::error::vmlinux 缺少 kernelsu_init —— KernelSU 内建集成失败"; exit 1; }
+          strings out/vmlinux | grep -qF 'susfs is initialized' || { echo "::error::vmlinux 缺少 SUSFS 初始化串 —— SUSFS 未编译进去"; exit 1; }
+          strings out/vmlinux | grep -qF 'nm_rules' || { echo "::error::vmlinux 缺少 NoMount 标记 —— NoMount 未编译进去"; exit 1; }
+          echo "集成校验通过: KernelSU (built-in) + SUSFS + NoMount 均已链接进 vmlinux"
+
+      # ==================== 打包 ====================
+      - name: 打包 AnyKernel3
+        run: |
+          set -euo pipefail
+          ZIP_NAME="android15-6.6.${{ inputs.sub_level }}-${{ inputs.snapshot }}-AnyKernel3.zip"
+          DIST="$GKI_ROOT/dist"
+          mkdir -p "$DIST"
+          rm -f "$DIST"/*
+          if [ ! -f "${KERNEL_IMAGE:-}" ]; then
+            echo "::error::编译产物不存在: ${KERNEL_IMAGE:-未导出}"
+            echo "--- 在 $GKI_ROOT/common 下查找 Image ---"
+            find "$GKI_ROOT/common" -maxdepth 5 -type f -name 'Image*' -printf '%p %s bytes\n' 2>/dev/null | head -20 || true
+            exit 1
+          fi
+          echo "内核镜像: $KERNEL_IMAGE ($(stat -c %s "$KERNEL_IMAGE") bytes)"
+          cd "$GITHUB_WORKSPACE/third_party/AnyKernel3"
+          cp "$KERNEL_IMAGE" ./Image
+          zip -q -r "$DIST/$ZIP_NAME" ./*
+          rm -f ./Image
+          # 顺带提供裸 Image: 便于用 scripts/pack-boot.sh 自行重打包 boot.img
+          cp "$KERNEL_IMAGE" "$DIST/Image-6.6.${{ inputs.sub_level }}"
+          ls -la "$DIST"
+
+      - name: 生成构建信息
+        env:
+          CUSTOM_SUFFIX: ${{ inputs.custom_suffix }}
+        run: |
+          set -euo pipefail
+          set -a
+          # shellcheck disable=SC1091
+          . "$GKI_ROOT/ci-build-info.env"
+          set +a
+          KREL="${KERNEL_RELEASE:-$(cat "$GKI_ROOT/common/out/include/config/kernel.release")}"
+          INFO="$GKI_ROOT/dist/build-info.txt"
+          {
+            echo "GKI 2.0 通用内核 (android15-6.6)"
+            echo "内核版本    : $KREL"
+            echo "ACK 基线    : ${{ inputs.baseline_commit }} (快照 ${{ inputs.snapshot }})"
+            echo "基线补丁    : patches/ 全部补丁 (git am)"
+            echo "KernelSU    : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
+            echo "SUSFS       : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
+            echo "NoMount     : $NOMOUNT (nomount.c sha256: ${NOMOUNT_SHA256:0:12})"
+            echo "自定义后缀  : ${CUSTOM_SUFFIX:-(无)}"
+            echo "构建时间    : $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "构建编号    : run ${{ github.run_id }} #${{ github.run_number }}"
+          } > "$INFO"
+          cat "$INFO"
+
+      - name: 上传内核产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.snapshot }}-${{ inputs.android_version }}
+          path: gki-kernel/dist/*
+          if-no-files-found: error
+          compression-level: 0

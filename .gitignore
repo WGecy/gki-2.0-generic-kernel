@@ -6,3 +6,8 @@ out/
 *.pem
 Image*
 __pycache__/
+
+# 构建工作区 (本地复现 / CI 使用, 见 scripts/README-ci.md)
+gki-kernel/
+dist/
+ci-build-info.env
