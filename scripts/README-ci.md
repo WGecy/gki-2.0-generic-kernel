@@ -28,7 +28,7 @@
 | `ksu_branch` | `main` | KernelSU 分支/标签 |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
 | `adios_lock` | `cpq` | ADIOS 调度器锁定：`cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios / `off`=不拦 |
-| `custom_suffix` | 空 | 追加到版本串，如 `-test-01` → `6.6.158-test-01`；留空即项目默认 `6.6.158` |
+| `custom_suffix` | 空 | 追加到版本串末尾，如 `-test-01` → `6.6.158-android15-8-4k-test-01`；留空即项目默认 `6.6.158-android15-8-4k` |
 | `build_time` | `N` | `N`/留空 = 当前 UTC，否则写入 `KBUILD_BUILD_TIMESTAMP` |
 
 产物（发布到 `kernel-latest` Release，同时作为 Actions artifact 上传）：
@@ -44,7 +44,7 @@
    libssl-dev zlib1g-dev python3 zip unzip cpio rsync patch jq`。
 2. **拉基线**：`git init` + `git fetch --depth 1 origin <baseline_commit>`（失败则用
    快照日期附近的 `android15-6.6` 浅历史兜底），随后校验 `HEAD == baseline_commit`。
-3. **打补丁**：`git am patches/*.patch`（83 个；基线换 commit 必须重新生成补丁）。
+3. **打补丁**：`git am patches/*.patch`（84 个；基线换 commit 必须重新生成补丁）。
 4. **工具链**：`prebuilts/clang/host/linux-x86` 稀疏拉取 `clang-r510928`；
    `kernel/prebuilts/build-tools` 稀疏拉取 `linux-x86/{bin,lib64}`（pahole/lz4/dtc）；
    写入 `PATH`/`LD_LIBRARY_PATH`/`CLANG_AUTOFDO_PROFILE`（AutoFDO profile 必须绝对路径）。

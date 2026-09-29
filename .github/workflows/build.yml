@@ -296,7 +296,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
           # 版本串校验
-          EXPECT="6.6.${{ inputs.sub_level }}${CUSTOM_SUFFIX}"
+          EXPECT="6.6.${{ inputs.sub_level }}-android15-8-4k${CUSTOM_SUFFIX}"
           if [ "$KREL" != "$EXPECT" ]; then
             echo "::error::内核版本串不符: 期望 $EXPECT, 实际 $KREL"
             exit 1
