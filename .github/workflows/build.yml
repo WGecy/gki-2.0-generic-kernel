@@ -4,7 +4,7 @@
 #   1. 环境准备
 #   2. 拉取 ACK 基线源码 (精确 commit)
 #   3. git am patches/ (基线补丁)
-#   4. 拉取 AOSP 工具链 (clang-r510928 + build-tools)
+#   4. 准备工具链 (clang 19 + lld 19 发行版包 + AOSP build-tools)
 #   5. 集成 ReSukiSU-Ultra + SUSFS + NoMount (scripts/ci-integrate.sh)
 #   6. defconfig + 编译 Image (plain make, LTO + AutoFDO, 单片内核)
 #   7. AnyKernel3 打包 + 产物上传
@@ -20,10 +20,13 @@ env:
   GKI_ROOT: ${{ github.workspace }}/gki-kernel
   BASELINE_REPO: https://android.googlesource.com/kernel/common
   BASELINE_BRANCH: android15-6.6
-  CLANG_PREBUILT_REPO: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
   BUILD_TOOLS_REPO: https://android.googlesource.com/kernel/prebuilts/build-tools
   TOOLCHAIN_BRANCH: main-kernel-build-2024
-  CLANG_DIR: clang-r510928
+  # clang 19 + lld 19 走发行版包 (Ubuntu 24.04 noble); 二进制无版本号地装在 $LLVM_BIN 下,
+  # 与 scripts/env.sh 一致, 因此 make 仍然用 LLVM=1.
+  # 不用 AOSP prebuilt: main-kernel-build-2024 分支只有 clang-r510928 (clang 18), 没有 19;
+  # 而 CFI type hash 与 clang 版本绑定, 必须与 KMI 同为 clang 19.
+  LLVM_BIN: /usr/lib/llvm-19/bin
 
 on:
   workflow_call:
@@ -96,6 +99,7 @@ jobs:
           echo "内核版本  : ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
           echo "ACK 基线  : ${{ inputs.baseline_commit }} (快照 ${{ inputs.snapshot }})"
           echo "内核形态  : 单片 (monolithic) + LTO thin + AutoFDO"
+          echo "工具链    : clang 19 + lld 19 ($LLVM_BIN)"
           echo "KernelSU  : ReSukiSU-Ultra @ ${{ inputs.ksu_branch }}"
           echo "SUSFS     : ${{ inputs.susfs_branch }}"
           echo "NoMount   : 启用"
@@ -179,31 +183,35 @@ jobs:
           git log --oneline | head -"$((COUNT + 1))"
           grep -m1 '^SUBLEVEL = ' Makefile
 
-      # ==================== 工具链 (缓存 + 拉取) ====================
-      - name: 缓存工具链
+      # ==================== 工具链 (clang 19 + lld 19 + build-tools) ====================
+      - name: 缓存 build-tools
         uses: actions/cache@v5
         with:
-          path: |
-            gki-kernel/clang-prebuilt
-            gki-kernel/kbt
-          key: gki-toolchain-${{ env.TOOLCHAIN_BRANCH }}-${{ env.CLANG_DIR }}-v1
+          path: gki-kernel/kbt
+          key: gki-buildtools-${{ env.TOOLCHAIN_BRANCH }}-v1
 
-      - name: 准备工具链 (AOSP prebuilt clang + build-tools)
+      - name: 准备工具链 (clang 19 + lld 19 + build-tools)
         run: |
           set -euo pipefail
           cd "$GKI_ROOT"
-          if [ ! -x "clang-prebuilt/$CLANG_DIR/bin/clang" ]; then
-            rm -rf clang-prebuilt
-            git clone --filter=blob:none --sparse -b "$TOOLCHAIN_BRANCH" "$CLANG_PREBUILT_REPO" clang-prebuilt
-            git -C clang-prebuilt sparse-checkout set "$CLANG_DIR"
-          fi
+          # clang 19 + lld 19 用发行版包: Ubuntu 24.04 (noble) 的 clang-19/lld-19/llvm-19 = 19.1.1。
+          # 三个包把无版本号的 clang / ld.lld / llvm-* 都装在 $LLVM_BIN 下, 所以 make 继续用 LLVM=1
+          # (与 scripts/env.sh 同一套做法)。AOSP prebuilt 的 main-kernel-build-2024 分支只有
+          # clang-r510928 = clang 18, 没有 19 —— 而 CFI type hash 与 clang 版本绑定, 必须与 KMI 对齐。
+          sudo apt-get install -y clang-19 lld-19 llvm-19
+          # LLVM=1 依赖无版本号的工具名: 缺任何一个都会等到几十分钟后才炸, 这里提前硬校验
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump \
+                   llvm-readelf llvm-strip llvm-ranlib llvm-profdata; do
+            [ -x "$LLVM_BIN/$t" ] || { echo "::error::clang 19 工具链缺少 $t (期望 $LLVM_BIN/$t; 检查 clang-19/lld-19/llvm-19 是否装全)"; exit 1; }
+          done
+          # AOSP build-tools: pahole / lz4 / dtc (内核构建需要)
           if [ ! -x kbt/linux-x86/bin/pahole ]; then
             rm -rf kbt
             git clone --filter=blob:none --sparse -b "$TOOLCHAIN_BRANCH" "$BUILD_TOOLS_REPO" kbt
             git -C kbt sparse-checkout set linux-x86/bin linux-x86/lib64
           fi
           # 后续步骤统一使用该工具链与 AutoFDO profile (profile 必须绝对路径)
-          TOOL_PATH="$GKI_ROOT/clang-prebuilt/$CLANG_DIR/bin:$GKI_ROOT/kbt/linux-x86/bin"
+          TOOL_PATH="$LLVM_BIN:$GKI_ROOT/kbt/linux-x86/bin"
           TOOL_LDPATH="$GKI_ROOT/kbt/linux-x86/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           {
             echo "PATH=$TOOL_PATH:$PATH"
@@ -214,6 +222,7 @@ jobs:
           export PATH="$TOOL_PATH:$PATH"
           export LD_LIBRARY_PATH="$TOOL_LDPATH"
           clang --version | head -2
+          ld.lld --version | head -1
           pahole --version
 
       # ==================== 集成 ReSukiSU-Ultra + SUSFS + NoMount ====================
@@ -295,7 +304,11 @@ jobs:
             echo "KERNEL_RELEASE_FILE=$PWD/out/include/config/kernel.release"
           } >> "$GITHUB_ENV"
 
-          # 版本串校验
+          # 版本串由 scripts/setlocalversion 逐段拼接:
+          #   ${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}
+          # patch 0002 把 CONFIG_LOCALVERSION 设为 "-android15-8-4k"; LOCALVERSION 在此传入自定义后缀
+          # (追加在末尾), 传空串时顺带抑制 setlocalversion 追加 +/-gHASH。
+          # 故缺省产物为 6.6.<sub_level>-android15-8-4k, 加后缀即 6.6.<sub_level>-android15-8-4k<suffix>
           EXPECT="6.6.${{ inputs.sub_level }}-android15-8-4k${CUSTOM_SUFFIX}"
           if [ "$KREL" != "$EXPECT" ]; then
             echo "::error::内核版本串不符: 期望 $EXPECT, 实际 $KREL"

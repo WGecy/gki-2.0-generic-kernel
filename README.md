@@ -102,8 +102,10 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (迁移自老项
 
 - **基线可复现**：按 `data/android15/6.6.json` 里的 `baseline_commit` 精确浅取 ACK 源码，
   `git am patches/*.patch` 之后才开始集成；基线不一致直接失败（补丁是按该 commit 生成的）。
-- **工具链**：AOSP 预编译 `clang-r510928` + `kernel/prebuilts/build-tools`（pahole/lz4/dtc），
-  `ARCH=arm64 LLVM=1`，与 `scripts/build.sh` 完全一致；工具链走 Actions 缓存。
+- **工具链**：系统 clang 19 + lld 19（Ubuntu 24.04 的 `clang-19`/`lld-19`/`llvm-19`，
+  `/usr/lib/llvm-19/bin` 前置到 `PATH`，与 `scripts/env.sh` 同一套做法；CFI type hash 与 clang
+  版本绑定，必须与 KMI 同为 clang 19）+ `kernel/prebuilts/build-tools`（pahole/lz4/dtc，
+  走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（KSU 仓库
   `kernel-patches/fusebpf`，提供内核侧 `fuse_bpf_lookup_revalidate_*`）→ SUSFS（gitlab 上游
   50_add_susfs 补丁 + 源码）→ NoMount（hook 补丁 + 源码）→ ADIOS（调度器补丁 +

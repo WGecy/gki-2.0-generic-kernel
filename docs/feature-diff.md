@@ -3,8 +3,8 @@
 | | 老项目 | 新项目 |
 | --- | --- | --- |
 | 仓库 | `ReSukiSU-Ultra-Kernel` | `gki-2.0-generic-kernel`（本仓库） |
-| 基线 | ACK `android15-6.6` 两个分支：`2015-03`(6.6.77) / `2026-01`(6.6.118)，repo manifest | ACK `android15-6.6` tip 单一 commit `448c3033`(6.6.142) + `patches/` 83 个补丁 → **6.6.158** |
-| 构建 | kleaf/bazel（`--config=fast --lto=thin --defconfig_fragment`），产物 dist（含模块） | plain make + AOSP clang-r510928 + AutoFDO（与 `scripts/build.sh` 一致），产物 `Image` |
+| 基线 | ACK `android15-6.6` 两个分支：`2015-03`(6.6.77) / `2026-01`(6.6.118)，repo manifest | ACK `android15-6.6` tip 单一 commit `448c3033`(6.6.142) + `patches/` 84 个补丁 → **6.6.158** |
+| 构建 | kleaf/bazel（`--config=fast --lto=thin --defconfig_fragment`），产物 dist（含模块） | plain make + clang 19 + lld 19 + AutoFDO（与 `scripts/build.sh` 一致），产物 `Image` |
 | 集成入口 | `build.py`（10 步）+ `patches.py` + `config.yaml` 开关 + `build.yml` | `scripts/ci-integrate.sh`（7 个 stage）+ `.github/workflows/build.yml` |
 | 打包 | AnyKernel3 + 管理器 APK → `kernel-latest` Release | 同（AnyKernel3 已迁移），另附裸 `Image` 与 `build-info.txt` |
 
@@ -81,7 +81,7 @@
 | ABI 并集、LTS 合并（`build.py step04.6`）、ACK tag 自动升级（`step04.5`） | 精确 commit 锁定基线（`data/android15/6.6.json`），无这些步骤 | ⛔ |
 | `setlocalversion` 去 `-dirty` | `LOCALVERSION=` + `LOCALVERSION_AUTO=n`（`patches/0002`）已保证版本串干净 | ✅ |
 | 构建时间戳（`init/Makefile` 注入） | `KBUILD_BUILD_TIMESTAMP`（`build_time` 输入） | ✅ |
-| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION` | ✅ |
+| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION`（**追加**在 `CONFIG_LOCALVERSION="-android15-8-4k"` 之后：`-test-01` → `6.6.158-android15-8-4k-test-01`；要换整段 KMI 串得改 `gki_defconfig`） | ✅ |
 | `fastbuild.yml`（make + ccache-ECS 快速构建） | 未迁移（主流程走 Actions；工具链有 Actions 缓存） | ❌（可选） |
 | 两个基线 6.6.77 / 6.6.118 | 单基线 6.6.158 | 差异（非缺失） |
 

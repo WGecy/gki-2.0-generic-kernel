@@ -45,9 +45,11 @@
 2. **拉基线**：`git init` + `git fetch --depth 1 origin <baseline_commit>`（失败则用
    快照日期附近的 `android15-6.6` 浅历史兜底），随后校验 `HEAD == baseline_commit`。
 3. **打补丁**：`git am patches/*.patch`（84 个；基线换 commit 必须重新生成补丁）。
-4. **工具链**：`prebuilts/clang/host/linux-x86` 稀疏拉取 `clang-r510928`；
-   `kernel/prebuilts/build-tools` 稀疏拉取 `linux-x86/{bin,lib64}`（pahole/lz4/dtc）；
-   写入 `PATH`/`LD_LIBRARY_PATH`/`CLANG_AUTOFDO_PROFILE`（AutoFDO profile 必须绝对路径）。
+4. **工具链**：`apt` 装 `clang-19 lld-19 llvm-19`（Ubuntu 24.04 的 19.1.1；三个包把无版本号的
+   `clang`/`ld.lld`/`llvm-*` 都装在 `/usr/lib/llvm-19/bin`，所以 make 仍用 `LLVM=1`，与
+   `scripts/env.sh` 同一套做法）；`kernel/prebuilts/build-tools` 稀疏拉取 `linux-x86/{bin,lib64}`
+   （pahole/lz4/dtc，走 Actions 缓存）；硬校验 10 个工具齐全后写入
+   `PATH`/`LD_LIBRARY_PATH`/`CLANG_AUTOFDO_PROFILE`（AutoFDO profile 必须绝对路径）。
 5. **集成**：`bash scripts/ci-integrate.sh --gki-root "$GKI_ROOT" --workspace "$GITHUB_WORKSPACE" ...`
 6. **配置 + 编译**：`make O=out ARCH=arm64 LLVM=1 LOCALVERSION=<suffix>
    KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig` 然后 `... -j$(nproc) Image`
@@ -187,5 +189,5 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
   会静默丢弃未声明的项；工作流的 defconfig 步骤会硬校验关键项，CI 会立刻暴露。
 - **LTO 构建内存**：GitHub runner 约 4 vCPU / 16 GB，工作流用 `-j$(nproc)`；如遇 OOM，
   可把任务里的 `JOBS` 环境变量调小（`-j4` → `-j2`）。
-- **首次构建耗时**：需要拉 ACK 源码 + clang 预编译包（约 1–2 GB），并编译单片 LTO 内核，
+- **首次构建耗时**：需要拉 ACK 源码（约 1–2 GB）+ build-tools，并编译单片 LTO 内核，
   首次约 60–100 分钟；工具链有 Actions 缓存，后续构建会快一些。
