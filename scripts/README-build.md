@@ -1,20 +1,22 @@
-# GKI_ROOT GKI 6.6.158 Image 构建记录（plain make + 官方 hermetic 工具，无 root）
+# GKI_ROOT GKI 6.6.158 Image 构建记录（plain make + 系统 LLVM 19，无 root）
 
 ## 目标
-构建 GKI 2.0（android15-6.6）单片（monolithic）Image，版本串 `6.6.158`。
+构建 GKI 2.0（android15-6.6）单片（monolithic）Image，版本串形如
+`6.6.<SUBLEVEL>-android15-8[-<可选后缀>]-4k`（默认 `6.6.158-android15-8-4k`）。
 
 - 基线：AOSP ACK `android15-6.6` tip，commit `448c303366032107c46d39006c8127a5ca967a26`
-- 补丁：`patches/` 共 83 个
-  - 3 个通用：vermagic/CRC 绕过、空 `LOCALVERSION`、`SUBLEVEL=158`
+- 补丁：`patches/` 共 84 个
+  - 3 个通用：vermagic/CRC 绕过、`LOCALVERSION=-android15-8-4k`、`SUBLEVEL=158`
   - 1 个单片/LTO 配置：`0083-arm64-gki_defconfig-align-monolithic-image-with-Haru.patch`
+  - 1 个 LTO 符号名：`0084-lto-keep-plain-symbol-names-for-statics-internalized.patch`
   - 79 条 stable 回补：`v6.6.143..v6.6.157`
 - 形态：`gki_defconfig` 中 81 项 `=m` → `=y`；剩余 19 项 `=m`（18 个 KUNIT/ZRAM 测试 + `ZSMALLOC`）
 
 ## 目录
 ```
 $GKI_ROOT/               默认 $HOME/gki-kernel
-├── common/              内核树（基线 + patches/ 全部 83 个补丁）
-├── clang-prebuilt/      prebuilts/clang/host/linux-x86，sparse 取 clang-r510928
+├── common/              内核树（基线 + patches/ 全部 84 个补丁）
+├── tools/lld19/         lld 19 本地解包（usr/bin 提供 ld.lld）
 ├── kbt/                 kernel/prebuilts/build-tools（pahole/lz4/dtc/depmod + lib64）
 ├── hosttools/           本地解包的 Debian 包（无 root）：bison flex m4 libelf-dev zlib1g-dev pkgconf
 │   ├── bin/             自包含 wrapper：pkg-config / pahole
@@ -27,15 +29,15 @@ $GKI_ROOT/               默认 $HOME/gki-kernel
 # 0) 设定根目录（env.sh 默认 $HOME/gki-kernel）
 export GKI_ROOT=${GKI_ROOT:-$HOME/gki-kernel}
 
-# 1) 源码 + 83 个补丁
+# 1) 源码 + 84 个补丁
 git clone https://android.googlesource.com/kernel/common "$GKI_ROOT/common"
 git -C "$GKI_ROOT/common" checkout 448c303366032107c46d39006c8127a5ca967a26
 git -C "$GKI_ROOT/common" am "$GKI_ROOT"/patches/*.patch
 
-# 2) clang r510928
-git clone --filter=blob:none --sparse -b main-kernel-build-2024 \
-  https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 "$GKI_ROOT/clang-prebuilt"
-git -C "$GKI_ROOT/clang-prebuilt" sparse-checkout set clang-r510928
+# 2) clang 19 + lld 19（宿主无需 root；lld 若发行版未装可本地解包）
+sudo apt-get install clang-19 lld-19            # 已装则跳过
+# 若 lld-19 来自本地解包：dpkg-deb -x lld-19_*.deb "$GKI_ROOT/tools/lld19"
+# env.sh 会把 /usr/lib/llvm-19/bin 和 $GKI_ROOT/tools/lld19/usr/bin 前置到 PATH
 
 # 3) 官方宿主工具（pahole / lz4 / dtc / depmod）
 git clone --filter=blob:none --sparse -b main-kernel-build-2024 \
@@ -53,17 +55,20 @@ ln -sf /usr/lib/x86_64-linux-gnu/libelf.so.1 libelf.so && rm -f libelf.a
 # 5) 配置
 . "$GKI_ROOT/scripts/env.sh"
 cd "$GKI_ROOT/common"
-make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
+make O=out ARCH=arm64 LLVM=1 \
      KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
      HOSTCFLAGS="-I$GKI_ROOT/hosttools/root/usr/include" gki_defconfig
 
-# 6) 编译（AutoFDO 必须绝对路径；LTO 下 -j8 实测可过）
-make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
+# 6) 编译（AutoFDO 必须绝对路径；LTO+AutoFDO 峰值约 15GB，默认 -j$(nproc)）
+make O=out ARCH=arm64 LLVM=1 \
      KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
      HOSTCFLAGS="-I$GKI_ROOT/hosttools/root/usr/include" \
      CLANG_AUTOFDO_PROFILE="$GKI_ROOT/common/android/gki/aarch64/afdo/kernel.afdo" \
-     -j8 Image
-#   或：JOBS=8 "$GKI_ROOT/scripts/build.sh"
+     -j$(nproc) Image
+#   或："$GKI_ROOT/scripts/build.sh"   # LTO+AutoFDO 峰值约 15GB；仅 OOM 时用 JOBS=N 降并行
+#
+# 版本串默认取 gki_defconfig 的 CONFIG_LOCALVERSION="-android15-8-4k"；
+# 需要自定义后缀时追加 LOCALVERSION=<后缀> 覆盖（如 LOCALVERSION=-android15-8-custom-4k）。
 
 # 7) 校验
 strings out/arch/arm64/boot/Image | grep -m1 '6\.6\.158'
@@ -74,7 +79,7 @@ strings out/arch/arm64/boot/Image | grep -m1 '6\.6\.158'
 - profile：`common/android/gki/aarch64/afdo/kernel.afdo`（4.16MB，树内自带）
 - `CLANG_AUTOFDO_PROFILE` 必须用**绝对路径**：`O=out` 下编译器/链接器 cwd 在 `out/`，
   相对路径会报 `clang: error: no such file or directory`
-- LTO 构建内存占用高：`build.sh` 默认 `-j$(nproc)`；`-j8` 实测可通过，`JOBS=N` 可覆盖
+- LTO+AutoFDO 并行峰值内存约 15GB：默认 `-j$(nproc)`，仅在 OOM 时用 `JOBS=N` 降并行
 
 ## 生效配置
 ```
@@ -95,13 +100,15 @@ CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
 # CONFIG_LTO_NONE is not set
 # CONFIG_TRANSPARENT_HUGEPAGE_MADVISE is not set
 # CONFIG_PCIEASPM_DEFAULT is not set
-CONFIG_LOCALVERSION=""
+CONFIG_LOCALVERSION="-android15-8-4k"
 # CONFIG_LOCALVERSION_AUTO is not set
 ```
 
 ## 版本串
 `KERNELVERSION`（`Makefile`：`VERSION=6 PATCHLEVEL=6 SUBLEVEL=158`）= `6.6.158`；
-`CONFIG_LOCALVERSION=""` + `LOCALVERSION_AUTO` 关闭 + `LOCALVERSION` 为空 → `uname -r` 输出 `6.6.158`。
+`CONFIG_LOCALVERSION="-android15-8-4k"` + `LOCALVERSION_AUTO` 关闭 → `uname -r` 输出
+`6.6.158-android15-8-4k`。其中 `-android15-8` 对应 KMI（`KMI_GENERATION=8`）、`-4k` 为页大小；
+需要自定义后缀可在 `gki_defconfig` 改 `CONFIG_LOCALVERSION` 或构建时传 `LOCALVERSION=<后缀>`。
 
 ## 打包
 ```bash
@@ -111,8 +118,8 @@ CONFIG_LOCALVERSION=""
 保留分区尺寸，并自检内核区 sha256 与头部改动字节。
 
 ## 工具链与依赖
-- clang：`prebuilts/clang/host/linux-x86` @ `main-kernel-build-2024`，`clang-r510928`
+- clang/lld：系统 LLVM 19（Debian clang 19.1.x + LLD 19.1.x）；lld 亦可用本地解包置于 `$GKI_ROOT/tools/lld19/usr/bin`
 - 宿主工具：`kernel/prebuilts/build-tools`（pahole v1.25 / lz4 / dtc / depmod）
 - bison / flex / m4 / libelf-dev / zlib1g-dev / pkgconf：本地解包 Debian 包（`hosttools/`，无 root）
-- 不使用 GCC：`CONFIG_CFI_CLANG=y` 仅 clang 支持，且 CFI type hash 与 clang 版本绑定，必须用 `clang-r510928`
-- 宿主无需安装 clang / bazel / bison / flex / libelf-dev；构建过程无需 root
+- 不使用 GCC：`CONFIG_CFI_CLANG=y` 仅 clang 支持，且 CFI type hash 与 clang 版本绑定，必须用 clang 19
+- 构建过程无需 root
