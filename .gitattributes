@@ -1,0 +1,8 @@
+# 仓库里的文本全部按 LF 存放/检出。
+#
+# 为什么需要: 内核补丁 (patches/*.patch) 与构建脚本 (scripts/*.sh) 一旦在 Windows 上被
+# core.autocrlf=true 检出成 CRLF, 本地 `git am patches/*.patch` 会因上下文不匹配失败,
+# `bash scripts/build.sh` 也会因 CRLF 报错。这里显式声明 eol=lf, 优先级高于 core.autocrlf。
+#
+# 注意: text=auto 仍让 git 自行识别二进制 (third_party/AnyKernel3/tools/ 下的 ELF 工具不会被转换)。
+* text=auto eol=lf

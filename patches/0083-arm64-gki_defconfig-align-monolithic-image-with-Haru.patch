@@ -1,7 +1,7 @@
 From 0814a922403a7c6ab01a14482ed66565c6b8b9c6 Mon Sep 17 00:00:00 2001
 From: gki <gki@localhost>
 Date: Tue, 22 Sep 2026 00:47:37 +0800
-Subject: [PATCH 83/83] arm64: gki_defconfig: align monolithic image with
+Subject: [PATCH 83/84] arm64: gki_defconfig: align monolithic image with
  Haruhi config
 
 D class (ours=m -> Haruhi=y): 81 symbols set to =y (80 effective;
