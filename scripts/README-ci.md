@@ -67,16 +67,28 @@
    - `common/drivers/kernelsu` → `KernelSU/kernel` 软链接（已验证该仓库存在 `kernel/Kbuild`，
      kbuild 优先读它，因此可以按 `CONFIG_KSU=y` 内建，而不是 LKM 用的 `kernel/Makefile`）
    - `drivers/Makefile` 追加 `obj-$(CONFIG_KSU) += kernelsu/`；`drivers/Kconfig` source 其 Kconfig
-2. **fusebpf（KSU 内核侧补丁，必需）**
-   - 优先用 KSU 仓库自带的 `kernel-patches/fusebpf/*.patch`，缺失时回退到
-     `third_party/fusebpf/`（与 KSU 仓库副本逐字节一致）
-   - 两个补丁给内核 `fs/fuse/{backing.c,dir.c,fuse_i.h}` 加上
-     `fuse_bpf_lookup_revalidate_enabled` / `fuse_bpf_lookup_revalidate_set`
+2. **fusebpf（内核侧补丁，必需，v3 上游式实现）**
+   - 用本仓库 `third_party/fusebpf/`（**本地优先**）；只有本地缺失时才回退到 KSU 仓库自带的
+     `kernel-patches/fusebpf/`，且回退版本缺少 v3 实现时会直接失败（不静默用旧版）
+   - `fusebpf-lookup-revalidate.patch`（v3）：`fs/fuse/backing.c` 新增
+     `fuse_lookup_revalidate_{initialize,backing,finalize}`，`fs/fuse/dir.c` 的
+     `fuse_dentry_revalidate()` 在父目录是 backing inode 且带 BPF 程序时改走
+     `fuse_bpf_backing()` 并尊重 BPF 结果（`FUSE_ACTION_KEEP/REMOVE/REPLACE`），
+     `fs/fuse/fuse_i.h` 新增 `struct fuse_lookup_revalidate_io`；同时更新 fuse selftest
+     （`tools/testing/selftests/filesystems/fuse/`）
+   - `fusebpf-no-eexist.patch`：mknod/mkdir/link/symlink 四条 backing 路径把 `-EEXIST`
+     归一化成 `-ENOENT`（v3 起不再用运行时开关判断）
    - **为什么必需**：ReSukiSU 的 `CONFIG_KSU_FUSEBPF_FIX` 是 `default y`，其
-     `fusebpf_feature_get/set/fix_set` 与 `ksu_handle_susfs_cmd` 直接引用上面两个符号；
+     `fusebpf_feature_get/set/fix_set` 与 `CMD_FUSEBPF_SET` 直接引用
+     `fuse_bpf_lookup_revalidate_enabled` / `fuse_bpf_lookup_revalidate_set`；
      漏掉补丁/配置不匹配时不会在编译期报错，而是在 **链接 vmlinux 时报 undefined symbol**
      （2026-09-22 run 35693420939 的失败原因）。所以脚本会校验符号，工作流也会在
      defconfig 之后做「`KSU_FUSEBPF_FIX=y` ⇔ 内核侧符号存在」的一致性检查
+   - **v3 的语义变化**：v3 让该修复无条件生效，旧的两个符号不复存在；脚本因此注入一段
+     `GKI-FUSEBPF-KSU-COMPAT` 兼容垫片（追加到 `fs/fuse/backing.c` 末尾，幂等）——
+     `fuse_bpf_lookup_revalidate_enabled` 恒为 `true`，`fuse_bpf_lookup_revalidate_set()`
+     只在收到「关闭」请求时打一条 `pr_warn_once`。管理器/ksud 的 sysfs
+     `/sys/module/kernelsu/parameters/fusebpf_fix` 仍可读写，但关闭不再生效（只读语义）
    - 如确实不想用：`--no-fusebpf`（脚本会显式写 `# CONFIG_KSU_FUSEBPF_FIX is not set`）
 3. **SUSFS**（gitlab 上游，自动跟随最新）
    - 克隆 `susfs4ksu` 对应分支，复制 `50_add_susfs_in_gki-android15-6.6.patch` 与
@@ -107,8 +119,9 @@
    - 刷机后验证：`cat /sys/block/sda/queue/scheduler` 期望 `[adios]`；
      `dmesg | grep 'ADIOS locked'` 期望出现 `elevator: blocked scheduler switch to cpq`
 6. **Unicode 零宽字符绕过**（本仓库 `third_party/unicode_bypass`，迁移自 `features.unicode_bypass`）
-   - 应用 `unicode_bypass_fix_6.1+.patch`：改 `fs/unicode/mkutf8data.c`（移除 `ignore_init`）
-     与 `fs/unicode/utf8data.c_shipped`（归一化数据表 64256 → 64080 字节），
+   - 应用 `unicode_bypass_fix_6.1+.patch`（2026-10-02 重新生成的版本：补上 `index` 行、
+     hunk 上下文带函数名，便于 `git apply --check` / 三方合并）：改 `fs/unicode/mkutf8data.c`
+     （移除 `ignore_init`）与 `fs/unicode/utf8data.c_shipped`（归一化数据表 64256 → 64080 字节），
      使文件名归一化不再忽略零宽字符
    - 硬校验：`mkutf8data.c` 不再含 `ignore_init`，且 shipped 表为 `utf8data[64080]`
    - defconfig：确保 `CONFIG_UNICODE=y`；`--no-unicode` 可跳过
@@ -185,6 +198,12 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
 - **KSU 与 fusebpf 补丁必须配套**：ReSukiSU 若改掉 `KSU_FUSEBPF_FIX` 依赖的符号名或改为
   可选，需要同步更新 `third_party/fusebpf/`（或直接 `--no-fusebpf`）。这类不匹配只会在
   链接阶段暴露，工作流的 defconfig 检查会把失败提前到 2 分钟内。
+  当前状态：内核侧是 v3（无运行时开关），KSU 侧仍引用旧的两个符号，靠脚本注入的
+  `GKI-FUSEBPF-KSU-COMPAT` 垫片维持链接；等 ReSukiSU 侧去掉这两个引用后，可同步删掉垫片。
+- **fusebpf 补丁的落点会随 ACK 漂移**：v3 补丁含 fuse selftest 改动
+  （`tools/testing/selftests/filesystems/fuse/`）。换基线后如果 selftest 变化较大，
+  `git apply` 会失败并退回 `patch -p1 -F3`，请在日志里确认没出现 `FAILED`/`.rej`；
+  确实只差 selftest 时，可从补丁里剔除这两个文件（内核功能不受影响）。
 - **ReSukiSU-Ultra Kconfig 变动**：新增/删除 `CONFIG_KSU_SUSFS_*` 时，`make gki_defconfig`
   会静默丢弃未声明的项；工作流的 defconfig 步骤会硬校验关键项，CI 会立刻暴露。
 - **LTO 构建内存**：GitHub runner 约 4 vCPU / 16 GB，工作流用 `-j$(nproc)`；如遇 OOM，

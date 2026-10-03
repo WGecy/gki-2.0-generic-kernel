@@ -15,7 +15,7 @@
 | 功能 | 老项目实现 | 新项目实现 | 状态 |
 | --- | --- | --- | --- |
 | ReSukiSU-Ultra (KernelSU) | `build.py step05c` + `third_party/ksu/setup-local.sh`（drivers/kernelsu 软链 + Makefile/Kconfig） | `ci-integrate.sh stage_ksu()`：同样软链 + `obj-$(CONFIG_KSU)`，走 KSU 仓库 `kernel/Kbuild` 内建 | ✅ |
-| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（优先 KSU `kernel-patches/fusebpf`，回退 `third_party/fusebpf`） | `stage_fusebpf()` + `third_party/fusebpf/`（与 KSU 仓库逐字节一致），并校验符号 | ✅ |
+| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（优先 KSU `kernel-patches/fusebpf`，回退 `third_party/fusebpf`，运行时可开关） | `stage_fusebpf()` + `third_party/fusebpf/`：**v3 上游式 lookup revalidate**（`fuse_lookup_revalidate_{initialize,backing,finalize}` + `struct fuse_lookup_revalidate_io` + selftest）+ `EEXIST→ENOENT` 归一化；本地优先于 KSU 仓库副本，校验 v3 落点并注入 KSU 兼容垫片 | ✅ 2026-10-02 升级 v3 |
 | SUSFS | `build.py step05e`（gitlab 上游 50_add_susfs + 源码拷贝 + 6.6 上下文修复） | `stage_susfs()`（同源同流程，含 `dma-buf.h`/`susfs_def.h` 修复与 sucompat 硬校验） | ✅ |
 | NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | `stage_nomount()` + `third_party/nomount/`（含 `fs/Makefile`、`fs/Kconfig` 兜底修复） | ✅ |
 | 管理器 APK 发布 | `.github/workflows/get-manager.yml` | 同名工作流迁移 | ✅ |
@@ -61,7 +61,7 @@
 | VM 默认值（watermark=30/swappiness=100）+ `tesla_vm_opt` | `patches/06-tune/vm-defaults.patch` + `third_party/vm-opt/tesla_vm_opt.c`（`build.py step07` 注入 mm/） | — | ❌ |
 | 温控偏移（游戏防降频，默认 3°C） | `patches/08-thermal/thermal-offset.patch` | — | ❌ |
 | cpuidle/cpufreq 优化 | `patches/07-drivers/09-cpuidle.patch` | — | ❌ |
-| Unicode 零宽字符绕过 | `patches/09-android/unicode_bypass_fix_6.1+.patch`（`patches.py apply_unicode_bypass`） | `third_party/unicode_bypass/unicode_bypass_fix_6.1+.patch` + `stage_unicode_bypass()`（改 `fs/unicode` 归一化数据表 + 校验 `utf8data[64080]`） | ✅ 2026-09-22 迁移 |
+| Unicode 零宽字符绕过 | `patches/09-android/unicode_bypass_fix_6.1+.patch`（`patches.py apply_unicode_bypass`） | `third_party/unicode_bypass/unicode_bypass_fix_6.1+.patch` + `stage_unicode_bypass()`（改 `fs/unicode` 归一化数据表 + 校验 `utf8data[64080]`）；补丁于 2026-10-02 重新生成（补 `index` 行 / 带函数名上下文） | ✅ 2026-09-22 迁移 |
 | BBG 防格机 | `third_party/kernel_patches/common/bbg`（老项目 `features.bbg: false`） | — | ⛔（老项目亦关闭） |
 
 ## 6. OEM / vendor 兼容（按机型，非通用功能）
@@ -110,6 +110,11 @@
 
 - 老项目补丁多数针对 **6.6.77 / 6.6.118 / 6.6.142** 生成，迁到 6.6.158 必须逐个验证；
   已验证可干净应用：`adios`、`unicode_bypass`、`fusebpf`、`nomount`、SUSFS 上游补丁。
+- **2026-10-02 复验**：`third_party/fusebpf/`（v3）与 `third_party/unicode_bypass/` 的补丁
+  在「基线 `448c3033` + `patches/` 全部 84 个」的内核树上 `git apply` 干净通过
+  （`fs/fuse/{backing.c,dir.c,fuse_i.h}` + `tools/testing/selftests/filesystems/fuse/`；
+  `fs/unicode/{mkutf8data.c,utf8data.c_shipped}`）。v3 补丁的 `index` 行与工作树不一致属正常
+  （补丁基于上游同版本文件生成），`git apply` 只看上下文，实测会带 1～189 行的 offset 成功。
 - 新内核为**单片且不打包模块**：`=m` 的功能（如 `CONFIG_ZRAM=m`）实际不可用，
   迁移这类功能时要同时把配置改成 `=y`（或在 AK3 包内附带模块）。
 - 换基线（改 `data/android15/6.6.json` 的 `baseline_commit`）时，`patches/` 与
