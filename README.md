@@ -107,17 +107,17 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   版本绑定，必须与 KMI 同为 clang 19）+ `kernel/prebuilts/build-tools`（pahole/lz4/dtc，
   走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
-  上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化，并补一层 KSU 兼容垫片）→ SUSFS（gitlab 上游
+  上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
   50_add_susfs 补丁 + 源码）→ NoMount（hook 补丁 + 源码）→ ADIOS（调度器补丁 +
   `elevator_get_default()` 强制 adios + `elevator_change()` 拦截 `cpq`）→ Unicode 绕过
   （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
 - **fusebpf v3**：`third_party/fusebpf/fusebpf-lookup-revalidate.patch` 是上游式
   `fuse_lookup_revalidate_{initialize,backing,finalize}` 实现（`fs/fuse/{backing.c,dir.c,fuse_i.h}`
   + fuse selftest），`fusebpf-no-eexist.patch` 把 mknod/mkdir/link/symlink 的 `EEXIST` 归一化为
-  `ENOENT`（hidden 目录不再把"已存在"当成"创建失败"）。v3 让该修复**无条件生效**，运行时开关随之下线；
-  ReSukiSU-Ultra 的 `CONFIG_KSU_FUSEBPF_FIX` 仍 `extern` 引用旧符号，因此 `ci-integrate.sh`
-  会补一层恒为 `true` 的兼容垫片（管理器里的开关变成只读），否则内建 KSU 会在链接 vmlinux 时
-  报 undefined symbol。
+  `ENOENT`（hidden 目录不再把"已存在"当成"创建失败"）。v3 让该修复**无条件生效**，运行时开关随之下线：
+  ReSukiSU-Ultra 侧已同步删除 `CONFIG_KSU_FUSEBPF_FIX`、`CMD_FUSEBPF_SET`、`ksud fusebpf`
+  子命令与 `kernel-patches/fusebpf/`，因此内核侧不再需要任何兼容垫片；若换回仍引用旧符号的
+  KSU，`ci-integrate.sh` 会立即报错（否则内建 KSU 会在链接 vmlinux 时报 undefined symbol）。
 - **ADIOS 锁定**：澎湃OS4（Android 17）的 `init.qti.kernel.rc` 会在每次开机把 userdata
   调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
   `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。

@@ -15,7 +15,7 @@
 | 功能 | 老项目实现 | 新项目实现 | 状态 |
 | --- | --- | --- | --- |
 | ReSukiSU-Ultra (KernelSU) | `build.py step05c` + `third_party/ksu/setup-local.sh`（drivers/kernelsu 软链 + Makefile/Kconfig） | `ci-integrate.sh stage_ksu()`：同样软链 + `obj-$(CONFIG_KSU)`，走 KSU 仓库 `kernel/Kbuild` 内建 | ✅ |
-| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（优先 KSU `kernel-patches/fusebpf`，回退 `third_party/fusebpf`，运行时可开关） | `stage_fusebpf()` + `third_party/fusebpf/`：**v3 上游式 lookup revalidate**（`fuse_lookup_revalidate_{initialize,backing,finalize}` + `struct fuse_lookup_revalidate_io` + selftest）+ `EEXIST→ENOENT` 归一化；本地优先于 KSU 仓库副本，校验 v3 落点并注入 KSU 兼容垫片 | ✅ 2026-10-02 升级 v3 |
+| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（KSU `kernel-patches/fusebpf`，运行时可开关） | `stage_fusebpf()` + `third_party/fusebpf/`：**v3 上游式 lookup revalidate**（`fuse_lookup_revalidate_{initialize,backing,finalize}` + `struct fuse_lookup_revalidate_io` + selftest）+ `EEXIST→ENOENT` 归一化；KSU 侧运行时开关/补丁副本已删除，脚本校验 v3 落点并在 KSU 仍引用旧符号时立即失败 | ✅ 2026-10-02 升级 v3 |
 | SUSFS | `build.py step05e`（gitlab 上游 50_add_susfs + 源码拷贝 + 6.6 上下文修复） | `stage_susfs()`（同源同流程，含 `dma-buf.h`/`susfs_def.h` 修复与 sucompat 硬校验） | ✅ |
 | NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | `stage_nomount()` + `third_party/nomount/`（含 `fs/Makefile`、`fs/Kconfig` 兜底修复） | ✅ |
 | 管理器 APK 发布 | `.github/workflows/get-manager.yml` | 同名工作流迁移 | ✅ |

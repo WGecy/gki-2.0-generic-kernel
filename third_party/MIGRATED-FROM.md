@@ -14,7 +14,9 @@
   hunk 上下文带函数名), 语义不变。
 
 v3 让 fusebpf 修复无条件生效, 旧符号 `fuse_bpf_lookup_revalidate_{enabled,set}` 消失;
-ReSukiSU 内核侧仍在引用它们, 由 `scripts/ci-integrate.sh` 的 `inject_fusebpf_ksu_compat()`
-补一层兼容垫片 (恒为 true / setter 只告警)。
+ReSukiSU-Ultra 侧已同步删除这两个 extern 与整套运行时开关 (CONFIG_KSU_FUSEBPF_FIX /
+fusebpf_fix sysfs / CMD_FUSEBPF_SET / ksud fusebpf 子命令) 以及它自带的
+kernel-patches/fusebpf/ 副本, 因此内核侧不再需要兼容垫片; ci-integrate.sh 会在 KSU
+仍引用旧符号时直接失败。
 
 集成方式见 scripts/ci-integrate.sh 的 stage_adios() / stage_unicode_bypass() / stage_fusebpf()。

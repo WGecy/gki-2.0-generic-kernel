@@ -255,19 +255,17 @@ jobs:
             KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig
           # 关键配置必须真正生效 (Kconfig 里没声明会被静默丢弃)
           for c in CONFIG_KSU=y CONFIG_NOMOUNT=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_SUS_MOUNT=y \
-                   CONFIG_KSU_FUSEBPF_FIX=y CONFIG_MQ_IOSCHED_ADIOS=y CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y; do
+                   CONFIG_MQ_IOSCHED_ADIOS=y CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y; do
             grep -qx "$c" out/.config || { echo "::error::配置未生效: $c"; exit 1; }
           done
-          # fusebpf: KSU 侧开着就必须有内核侧符号, 否则只会在链接阶段报 undefined symbol (历史教训: run 35693420939)
-          # v3 补丁提供 fuse_lookup_revalidate_* (上游式 lookup revalidate + EEXIST 归一化);
-          # ci-integrate.sh 另补 fuse_bpf_lookup_revalidate_enabled/set 兼容垫片给 ReSukiSU 的
-          # CONFIG_KSU_FUSEBPF_FIX 用 (v3 之后该修复无条件生效, 管理器开关只读)。
-          if grep -qx 'CONFIG_KSU_FUSEBPF_FIX=y' out/.config; then
-            for sym in fuse_lookup_revalidate_backing fuse_bpf_lookup_revalidate_enabled fuse_bpf_lookup_revalidate_set; do
-              grep -qF "$sym" fs/fuse/backing.c \
-                || { echo "::error::CONFIG_KSU_FUSEBPF_FIX=y 但 fs/fuse/backing.c 缺少 $sym (链接会失败)"; exit 1; }
-            done
-          fi
+          # fusebpf: 修复在 v3 内核侧补丁里无条件生效 (KSU 侧已无 KSU_FUSEBPF_FIX/运行时开关),
+          # 所以这里直接校验内核侧 v3 落点, 防止"补丁没打上但没人发现"
+          for sym in fuse_lookup_revalidate_backing fuse_lookup_revalidate_finalize; do
+            grep -qF "$sym" fs/fuse/backing.c \
+              || { echo "::error::fs/fuse/backing.c 缺少 $sym (fusebpf v3 补丁未应用)"; exit 1; }
+          done
+          grep -qF 'struct fuse_lookup_revalidate_io' fs/fuse/fuse_i.h \
+            || { echo "::error::fs/fuse/fuse_i.h 缺少 struct fuse_lookup_revalidate_io (fusebpf v3 补丁未应用)"; exit 1; }
           # ADIOS: 配置开着就必须有 block/adios.c, 否则编译期报 unknown target
           if grep -qx 'CONFIG_MQ_IOSCHED_ADIOS=y' out/.config; then
             [ -f block/adios.c ] || { echo "::error::CONFIG_MQ_IOSCHED_ADIOS=y 但 block/adios.c 不存在 (ADIOS 补丁未应用)"; exit 1; }

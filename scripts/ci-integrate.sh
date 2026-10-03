@@ -5,7 +5,7 @@
 #  在 "$GKI_ROOT/common" (ACK 基线 + patches/*.patch 已 git am 到位的内核树) 之上:
 #    1. 集成 ReSukiSU-Ultra (KernelSU): drivers/kernelsu 符号链接 + Makefile/Kconfig
 #    2. 应用 fusebpf 内核侧补丁 (v3 上游式 lookup revalidate + EEXIST 归一化,
-#       third_party/fusebpf; KSU_FUSEBPF_FIX 默认 y, 缺了会链接失败)
+#       third_party/fusebpf; 修复无条件生效, KSU 侧已无运行时开关)
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
 #    4. 应用 NoMount (third_party/nomount: hook 补丁 + nomount.c/h 源码)
 #    5. 应用 ADIOS IO 调度器 (third_party/adios) + 强制默认 + 运行时拦截 cpq (elevator.c)
@@ -25,10 +25,9 @@
 #    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6
 #    --android-version V   默认 android15 (决定 SUSFS 补丁文件名)
 #    --kernel-version V    默认 6.6
-#    --no-fusebpf          跳过 KSU fusebpf 补丁 (同时关闭 CONFIG_KSU_FUSEBPF_FIX)
-#                          注意: v3 补丁把该修复做成无条件生效, 故不再有
-#                          fuse_bpf_lookup_revalidate_enabled/set 的"开/关"语义,
-#                          脚本会补一层恒为 true 的兼容垫片供 KSU 侧链接
+#    --no-fusebpf          跳过 fusebpf 内核侧补丁 (third_party/fusebpf 的两个补丁)
+#                          注意: v3 补丁把该修复做成无条件生效, KSU 侧也已删掉
+#                          运行时开关 (KSU_FUSEBPF_FIX / fusebpf 子命令), 无需兼容垫片
 #    --no-susfs            跳过 SUSFS
 #    --no-nomount          跳过 NoMount
 #    --no-adios            跳过 ADIOS IO 调度器
@@ -99,7 +98,7 @@ COMMON="$GKI_ROOT/common"
 log "GKI_ROOT   : $GKI_ROOT"
 log "工作区     : $WORKSPACE"
 log "KernelSU   : $KSU_REPO @ $KSU_BRANCH"
-[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf v3 (KSU_FUSEBPF_FIX 依赖 + KSU 兼容垫片)"
+[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf v3 (无条件生效, KSU 侧无开关)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_BRANCH"
 [ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount    : $WORKSPACE/third_party/nomount"
 
@@ -256,60 +255,42 @@ stage_ksu() {
 # ============================================================================
 #  2. fusebpf 内核侧补丁 (third_party/fusebpf, v3 上游式实现)
 # ============================================================================
-inject_fusebpf_ksu_compat() {
-  # ReSukiSU-Ultra 的 CONFIG_KSU_FUSEBPF_FIX 仍然 extern 引用
-  # fuse_bpf_lookup_revalidate_enabled / fuse_bpf_lookup_revalidate_set;
-  # v3 补丁按上游做法把 revalidate 做成"无条件尊重 BPF 结果", 这两个符号随之消失,
-  # 内建 KSU 会在链接 vmlinux 时报 undefined symbol (历史教训: run 35693420939)。
-  # 兼容垫片: 变量恒为 true, setter 只告警 → KSU 侧照常链接, 管理器里的
-  # "FUSEBPF 直通修复" 开关变成只读 (尝试关闭会被忽略并打一条 dmesg)。
-  local f="$COMMON/fs/fuse/backing.c"
-  [ -f "$f" ] || die "fs/fuse/backing.c 不存在"
-  if grep -qF 'GKI-FUSEBPF-KSU-COMPAT-BEGIN' "$f"; then
-    ok "fs/fuse/backing.c: KSU 兼容垫片已存在 (幂等)"
-    return 0
+check_ksu_fusebpf_symbols() {
+  # v3 之后内核侧不再提供 fuse_bpf_lookup_revalidate_{enabled,set}。ReSukiSU-Ultra 侧
+  # 也已同步删掉这两个 extern 与整套运行时开关 (KSU_FUSEBPF_FIX / CMD_FUSEBPF_SET /
+  # ksud 的 fusebpf 子命令)。若 clone 到的 KSU 仍引用它们, 内建 KSU 会在链接 vmlinux
+  # 时报 undefined symbol (历史教训: run 35693420939) —— 这里提前失败, 不等到链接阶段。
+  local ksu_kernel="$GKI_ROOT/KernelSU/kernel"
+  [ -d "$ksu_kernel" ] || return 0
+  if grep -rqF --include='*.c' \
+       -e 'fuse_bpf_lookup_revalidate_set' \
+       -e 'fuse_bpf_lookup_revalidate_enabled' "$ksu_kernel"; then
+    die "KSU 源码仍引用 fuse_bpf_lookup_revalidate_{enabled,set} (v3 内核侧补丁已不提供): 请把 $KSU_REPO@$KSU_BRANCH 换到已移除运行时开关的版本"
   fi
-  cat >> "$f" <<'EOF'
-
-/* GKI-FUSEBPF-KSU-COMPAT-BEGIN
- * ReSukiSU-Ultra 的 CONFIG_KSU_FUSEBPF_FIX 仍 extern 引用下面两个符号。
- * v3 fusebpf 补丁 (上游式 lookup revalidate) 已让该修复无条件生效, 因此这里只保留
- * 兼容层: enabled 恒为 true, set() 仅告警。要彻底删掉请同步改 KSU 内核侧引用。
- */
-bool fuse_bpf_lookup_revalidate_enabled = true;
-EXPORT_SYMBOL_GPL(fuse_bpf_lookup_revalidate_enabled);
-
-void fuse_bpf_lookup_revalidate_set(bool enable)
-{
-	if (!enable)
-		pr_warn_once("fusebpf: revalidate fix is always on (v3), disable request ignored\n");
-}
-EXPORT_SYMBOL_GPL(fuse_bpf_lookup_revalidate_set);
-/* GKI-FUSEBPF-KSU-COMPAT-END */
-EOF
-  ok "fs/fuse/backing.c: 已注入 KSU 兼容垫片 (enabled 恒为 true, set() 只告警)"
+  ok "KSU 侧已无 fusebpf 运行时开关引用 (不需要兼容垫片)"
 }
 
 stage_fusebpf() {
   log "=========== [2/7] 应用 fusebpf 内核侧补丁 (v3) ==========="
-  # 优先用本仓库 third_party/fusebpf (v3 上游式实现 + EEXIST 归一化);
-  # 只有本地缺失时才回退到 KSU 仓库自带的 kernel-patches/fusebpf (通常是旧实现)。
-  local local_src="$WORKSPACE/third_party/fusebpf"
-  local ksu_src="$GKI_ROOT/KernelSU/kernel-patches/fusebpf"
-  local src="$local_src"
-  [ -f "$local_src/fusebpf-lookup-revalidate.patch" ] || src="$ksu_src"
+  # 补丁只来自本仓库 third_party/fusebpf (KSU 仓库的 kernel-patches/fusebpf 已随开关下线删除)
+  local src="$WORKSPACE/third_party/fusebpf"
+  local patch="$src/fusebpf-lookup-revalidate.patch"
+  [ -f "$patch" ] || die "fusebpf 补丁缺失: $patch"
   log "补丁来源: $src"
 
   # 旧实现 (v1: fuse_bpf_lookup_revalidate_enabled 开关 + struct fuse_lookup_io) 与 v3 不兼容,
   # 明确失败而不是静默用错版本。
-  grep -qF 'struct fuse_lookup_revalidate_io' "$src/fusebpf-lookup-revalidate.patch" 2>/dev/null \
-    || die "fusebpf 补丁集过旧: $src/fusebpf-lookup-revalidate.patch 不是 v3 实现 (期望含 struct fuse_lookup_revalidate_io)"
+  grep -qF 'struct fuse_lookup_revalidate_io' "$patch" 2>/dev/null \
+    || die "fusebpf 补丁集过旧: $patch 不是 v3 实现 (期望含 struct fuse_lookup_revalidate_io)"
 
-  # 内核树里若已打过 v1 (例如本地树用过 KSU kernel-patches 的旧补丁), v3 会大面积冲突:
+  # 内核树里若已打过 v1 (例如本地树曾用过 KSU kernel-patches 的旧补丁), v3 会大面积冲突:
   # 提前给出可执行的指引, 不留下满树 .rej。
   if grep -qF 'FUSEBPF 直通修复运行时开关' "$COMMON/fs/fuse/backing.c" 2>/dev/null; then
     die "fs/fuse/backing.c 里是 fusebpf v1 (开关式) 实现, 与 v3 不兼容: 请还原该文件或重新准备内核树"
   fi
+
+  # KSU 侧必须先于内核侧更新 (两边都引用/提供同一组符号)
+  check_ksu_fusebpf_symbols
 
   local name
   for name in fusebpf-lookup-revalidate.patch fusebpf-no-eexist.patch; do
@@ -329,11 +310,7 @@ stage_fusebpf() {
   [ "$eexist" -ge 4 ] \
     || die "fusebpf no-eexist 补丁未生效: fs/fuse/backing.c 只有 $eexist 处 EEXIST 归一化 (期望 4)"
   ok "fusebpf v3 落点校验通过 (3 个 stage + dir.c 挂载点 + ${eexist} 处 EEXIST 归一化)"
-
-  inject_fusebpf_ksu_compat
-  verify_marker fs/fuse/backing.c 'fuse_bpf_lookup_revalidate_enabled' 'KSU 兼容变量 (fusebpf_fix 开关)'
-  verify_marker fs/fuse/backing.c 'fuse_bpf_lookup_revalidate_set' 'KSU 兼容 setter'
-  ok "fusebpf 集成完成"
+  ok "fusebpf 集成完成 (修复无条件生效, 无运行时开关)"
 }
 
 # ============================================================================
@@ -612,14 +589,8 @@ stage_defconfig() {
   enable_config "$defconfig" 'CONFIG_KSU_NETISOLATE=y'
   enable_config "$defconfig" 'CONFIG_NOMOUNT=y'
 
-  # fusebpf: 该选项默认 y 且引用内核侧 fuse_bpf_lookup_revalidate_* 符号 (v3 补丁已把
-  # 修复做成无条件生效, 脚本会补恒为 true 的兼容垫片), 必须与上面的 fusebpf 补丁保持一致
-  # (--no-fusebpf 时必须显式关闭, 否则链接失败)
-  if [ "$ENABLE_FUSEBPF" = 1 ]; then
-    enable_config "$defconfig" 'CONFIG_KSU_FUSEBPF_FIX=y'
-  else
-    disable_config "$defconfig" 'CONFIG_KSU_FUSEBPF_FIX'
-  fi
+  # fusebpf: KSU 侧已无 KSU_FUSEBPF_FIX 配置项/运行时开关 (v3 内核侧补丁无条件生效),
+  # 因此这里没有配置要写; --no-fusebpf 只表示"不应用 third_party/fusebpf 的两个补丁"。
 
   if [ "$ENABLE_SUSFS" = 1 ]; then
     local c
@@ -698,7 +669,7 @@ fi
 
 log "================ 集成摘要 ================"
 log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
-[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, KSU_FUSEBPF_FIX=y + KSU 兼容垫片)"
+[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, 无条件生效; KSU 侧无开关/垫片)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
 [ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount  : third_party/nomount (hook 补丁 + 源码)"
 [ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (调度器 + 默认调度器注入 + 锁定=$ADIOS_LOCK)"
