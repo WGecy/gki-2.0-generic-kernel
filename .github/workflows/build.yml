@@ -65,7 +65,7 @@ on:
         description: "SUSFS 分支 (gitlab simonpunk/susfs4ksu)"
         required: false
         type: string
-        default: "gki-android15-6.6"
+        default: "gki-android15-6.6-dev"
       adios_lock:
         description: "ADIOS 运行时切换拦截: cpq(只拦 cpq) / all(只允许 adios) / off"
         required: false
