@@ -102,7 +102,7 @@ jobs:
           echo "工具链    : clang 19 + lld 19 ($LLVM_BIN)"
           echo "KernelSU  : ReSukiSU-Ultra @ ${{ inputs.ksu_branch }}"
           echo "SUSFS     : ${{ inputs.susfs_branch }}"
-          echo "NoMount   : 启用"
+          echo "NoMount   : 启用 (v2.2.0, 目录式内建 fs/nomount/)"
           echo "自定义后缀: ${CUSTOM_SUFFIX:-(无)}"
           echo "========================================"
 
@@ -270,6 +270,16 @@ jobs:
           if grep -qx 'CONFIG_MQ_IOSCHED_ADIOS=y' out/.config; then
             [ -f block/adios.c ] || { echo "::error::CONFIG_MQ_IOSCHED_ADIOS=y 但 block/adios.c 不存在 (ADIOS 补丁未应用)"; exit 1; }
           fi
+          # NoMount: 配置开着就必须有 fs/nomount/ 目录树, 且 fs/Kconfig 已 source 子目录 Kconfig
+          if grep -qx 'CONFIG_NOMOUNT=y' out/.config; then
+            for f in Kconfig Makefile nomount.c nomount.h; do
+              [ -f "fs/nomount/$f" ] || { echo "::error::CONFIG_NOMOUNT=y 但 fs/nomount/$f 不存在 (NoMount 未集成)"; exit 1; }
+            done
+            grep -qF 'source "fs/nomount/Kconfig"' fs/Kconfig \
+              || { echo "::error::fs/Kconfig 未 source fs/nomount/Kconfig"; exit 1; }
+            grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount/' fs/Makefile \
+              || { echo "::error::fs/Makefile 缺少 obj-\$(CONFIG_NOMOUNT) += nomount/"; exit 1; }
+          fi
           echo "KSU/fusebpf/SUSFS/NoMount/ADIOS 配置与补丁一致"
           echo "剩余模块化配置 (=m): $(grep -c '=m$' out/.config)"
 
@@ -323,7 +333,9 @@ jobs:
           # 内建集成校验: 防止"补丁打上了但没编译进去"
           nm out/vmlinux | grep -q 'kernelsu_init' || { echo "::error::vmlinux 缺少 kernelsu_init —— KernelSU 内建集成失败"; exit 1; }
           strings out/vmlinux | grep -qF 'susfs is initialized' || { echo "::error::vmlinux 缺少 SUSFS 初始化串 —— SUSFS 未编译进去"; exit 1; }
-          strings out/vmlinux | grep -qF 'nm_rules' || { echo "::error::vmlinux 缺少 NoMount 标记 —— NoMount 未编译进去"; exit 1; }
+          # NoMount v2.2.0 起不再有 v1 的 kmem_cache 名 "nm_rules"; 改用模块描述串识别
+          strings out/vmlinux | grep -qF 'NoMount Path Redirection VFS Subsystem' \
+            || { echo "::error::vmlinux 缺少 NoMount 标记 —— NoMount 未编译进去"; exit 1; }
           echo "集成校验通过: KernelSU (built-in) + SUSFS + NoMount 均已链接进 vmlinux"
 
       # ==================== 打包 ====================
@@ -367,7 +379,7 @@ jobs:
             echo "基线补丁    : patches/ 全部补丁 (git am)"
             echo "KernelSU    : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
             echo "SUSFS       : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
-            echo "NoMount     : $NOMOUNT (nomount.c sha256: ${NOMOUNT_SHA256:0:12})"
+            echo "NoMount     : $NOMOUNT ${NOMOUNT_VERSION:-(unknown)} (协议 v${NOMOUNT_PROTOCOL:-?}, nomount.c sha256: ${NOMOUNT_SHA256:0:12})"
             echo "自定义后缀  : ${CUSTOM_SUFFIX:-(无)}"
             echo "构建时间    : $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "构建编号    : run ${{ github.run_id }} #${{ github.run_number }}"

@@ -55,7 +55,10 @@
    KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig` 然后 `... -j$(nproc) Image`
    （单片内核 + LTO thin + AutoFDO，与 `scripts/build.sh` 一致）。
 7. **校验**：`kernel.release` / Image 版本串 / `vmlinux` 中 `kernelsu_init`、
-   `susfs is initialized`、`nm_rules` 三项内建标记。
+   `susfs is initialized`、`NoMount Path Redirection VFS Subsystem` 三项内建标记
+   （NoMount v2.2.0 已无 v1 的 `nm_rules` kmem_cache 名）；另校验 `CONFIG_NOMOUNT=y` 时
+   `fs/nomount/` 四件套齐全、`fs/Kconfig` 已 `source "fs/nomount/Kconfig"`、
+   `fs/Makefile` 有 `obj-$(CONFIG_NOMOUNT) += nomount/`。
 8. **打包**：AnyKernel3 目录内放入 `Image` 后 zip。
 
 ## ci-integrate.sh 做了什么
@@ -93,11 +96,21 @@
    - 6.6 上下文修复（`fs/proc/base.c` 的 `dma-buf.h` 锚点、`susfs_def.h` 补齐）
    - **硬校验**：`fs/exec.c` 的 `ksu_handle_execveat`、`fs/stat.c` 的 `ksu_handle_stat`
      （sucompat 依赖，缺失即失败）
-4. **NoMount**（本仓库 `third_party/nomount`，老项目同名资产迁移而来）
-   - 应用 `nomount-6.6.patch`（namei/d_path/readdir/stat/statfs/task_mmu/Kconfig/Makefile）
-   - 复制 `nomount.c` → `fs/nomount.c`、`nomount.h` → `fs/nomount.h` + `include/linux/nomount.h`
-   - 兜底修复 `fs/Makefile` 的 `obj-$(CONFIG_NOMOUNT) += nomount.o` 与 `fs/Kconfig`
-     的 `config NOMOUNT`，然后逐项校验所有 hook 落点
+4. **NoMount v2.2.0**（本仓库 `third_party/nomount`，与上游 `maxsteeel/nomount` `kernel/src`
+   同源；v2 起是**目录式内建**，不再有 hook 补丁）
+   - `third_party/nomount/{Kconfig,Makefile,nomount.c,nomount.h}` 整体复制到 `fs/nomount/`
+     （用真实目录而非上游 `setup.sh` 的符号链接：CI 内核树每次重新克隆，且符号链接指向
+     工作区外会破坏 out-of-tree 构建）
+   - `fs/Makefile` 追加 `obj-$(CONFIG_NOMOUNT) += nomount/`（并删除 v1 遗留的
+     `obj-$(CONFIG_NOMOUNT) += nomount.o`）；`fs/Kconfig` 在最后一个 `endmenu` 前插入
+     `source "fs/nomount/Kconfig"`；若树里仍有内联 `config NOMOUNT` 直接失败（重复定义）
+   - 清理 v1.x 遗留文件：`fs/nomount.c`、`fs/nomount.h`、`include/linux/nomount.h`
+   - 校验 `NM_MAGIC_SIG`、`register_key_type(&nm_key_type)`、`NOMOUNT_BASE_VERSION "22"`
+     等落点。v2 的 IPC 是 `add_key("nomount", "trigger", &ptr, 8, -1)` + 4096 字节单页
+     payload（协议 v22），**内核侧与用户态（ksud / BakaSU 管理器）必须同版本**，否则
+     `add_key` 必然返回 `-ECANCELED` 且 `payload.status` 永远是错
+   - 无 .git 时上游 `kernel/src/Makefile` 探测不到 `nomount` 仓库，`NOMOUNT_VERSION`
+     落为 `"22"`（无 commit 后缀），符合预期
 5. **ADIOS IO 调度器**（本仓库 `third_party/adios`，迁移自老项目 `features.adios`）
    - 应用 `14-adios.patch`：新增 `block/adios.c`，并注册 `block/Kconfig.iosched`
      （`MQ_IOSCHED_ADIOS` / `MQ_IOSCHED_DEFAULT_ADIOS`）与 `block/Makefile`
@@ -126,7 +139,8 @@
    （已启用跳过 / `# ... is not set` 原位替换 / 不存在则追加）；
    fusebpf 已无配置项（内核侧补丁本身即开关）
 8. **构建信息**：`$GKI_ROOT/ci-build-info.env`（KSU/SUSFS commit、fusebpf/NoMount/ADIOS/
-   Unicode 状态、NoMount sha256），供 release notes 使用。
+   Unicode 状态、`NOMOUNT_VERSION`/`NOMOUNT_PROTOCOL` 与 `fs/nomount/nomount.c` 的 sha256），
+   供 release notes 使用。
 
 脚本幂等：重复执行只更新 KernelSU/SUSFS 源码，已应用的补丁自动跳过（`Reversed`）。
 结束时若存在 `.rej` 会打印并失败（确认无碍可加 `--allow-rej`）；补丁调用带

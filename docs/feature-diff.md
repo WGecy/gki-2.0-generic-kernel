@@ -17,7 +17,7 @@
 | ReSukiSU-Ultra (KernelSU) | `build.py step05c` + `third_party/ksu/setup-local.sh`（drivers/kernelsu 软链 + Makefile/Kconfig） | `ci-integrate.sh stage_ksu()`：同样软链 + `obj-$(CONFIG_KSU)`，走 KSU 仓库 `kernel/Kbuild` 内建 | ✅ |
 | fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（KSU `kernel-patches/fusebpf`，运行时可开关） | `stage_fusebpf()` + `third_party/fusebpf/`：**v3 上游式 lookup revalidate**（`fuse_lookup_revalidate_{initialize,backing,finalize}` + `struct fuse_lookup_revalidate_io` + selftest）+ `EEXIST→ENOENT` 归一化；KSU 侧运行时开关/补丁副本已删除，脚本校验 v3 落点并在 KSU 仍引用旧符号时立即失败 | ✅ 2026-10-02 升级 v3 |
 | SUSFS | `build.py step05e`（gitlab 上游 50_add_susfs + 源码拷贝 + 6.6 上下文修复） | `stage_susfs()`（同源同流程，含 `dma-buf.h`/`susfs_def.h` 修复与 sucompat 硬校验） | ✅ |
-| NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | `stage_nomount()` + `third_party/nomount/`（含 `fs/Makefile`、`fs/Kconfig` 兜底修复） | ✅ |
+| NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | `stage_nomount()` + `third_party/nomount/` = 上游 **v2.2.0** `kernel/src` 四件套（`Kconfig`/`Makefile`/`nomount.c`/`nomount.h`）复制到 `fs/nomount/` 目录式内建（`fs/Makefile` 加 `obj-$(CONFIG_NOMOUNT) += nomount/`、`fs/Kconfig` source 子目录 Kconfig）；v2 起无 hook 补丁，改为 dentry/inode ops 劫持 + `add_key` 单页 payload（协议 v22），并自动清理 v1.x 遗留的 `fs/nomount.c`/`fs/nomount.h`/`include/linux/nomount.h` | ✅ 2026-10-28 升级 v2.2.0 |
 | 管理器 APK 发布 | `.github/workflows/get-manager.yml` | 同名工作流迁移 | ✅ |
 | 管理器签名（`manager_sign.h`/`apk_sign.c`） | `build.py step07` 注入 `RESUKISU_ULTRA` 签名 | ReSukiSU 仓库已内置 `RESUKISU_ULTRA`（pengzenzen-creator）与 `RESUKISU_ULTRA_CUSTOM`（WGecy release-key） | ➖ |
 | KSU seccomp `PF_EXITING` 防死机（6.6.118+） | `build.py step05d`（改 `KERNEL_VERSION(6,11,0)`） | ReSukiSU `policy/app_profile.c` 已自带 `>= 6.6.118` 版本分支 | ➖ |

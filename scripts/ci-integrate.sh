@@ -7,7 +7,8 @@
 #    2. 应用 fusebpf 内核侧补丁 (v3 上游式 lookup revalidate + EEXIST 归一化,
 #       third_party/fusebpf; 修复无条件生效, KSU 侧已无运行时开关)
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
-#    4. 应用 NoMount (third_party/nomount: hook 补丁 + nomount.c/h 源码)
+#    4. 集成 NoMount v2.2.0 (third_party/nomount -> fs/nomount/ 目录式内建;
+#       v2.x 已无 VFS hook 补丁, 改为 dentry/inode ops 劫持 + add_key 单页 payload IPC)
 #    5. 应用 ADIOS IO 调度器 (third_party/adios) + 强制默认 + 运行时拦截 cpq (elevator.c)
 #    6. 应用 Unicode 零宽字符绕过 (third_party/unicode_bypass)
 #    7. 写入 KSU / SUSFS / NoMount / ADIOS 的 defconfig 配置项
@@ -56,6 +57,7 @@ KERNEL_VERSION="6.6"
 ENABLE_FUSEBPF=1
 ENABLE_SUSFS=1
 ENABLE_NOMOUNT=1
+NOMOUNT_VERSION="v2.2.0"     # 与 third_party/nomount 同源; 协议版本见 fs/nomount/nomount.h
 ENABLE_ADIOS=1
 ADIOS_LOCK="cpq"
 ENABLE_UNICODE=1
@@ -100,7 +102,7 @@ log "工作区     : $WORKSPACE"
 log "KernelSU   : $KSU_REPO @ $KSU_BRANCH"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf v3 (无条件生效, KSU 侧无开关)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_BRANCH"
-[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount    : $WORKSPACE/third_party/nomount"
+[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount    : $WORKSPACE/third_party/nomount ($NOMOUNT_VERSION, 目录式内建 fs/nomount/)"
 
 # ============================================================================
 #  通用小工具
@@ -389,50 +391,69 @@ stage_susfs() {
 # ============================================================================
 #  3. NoMount (third_party/nomount)
 # ============================================================================
+# 目录式集成: v2.x 的源码树 (Kconfig/Makefile/nomount.c/nomount.h) 整体放进 fs/nomount/,
+# fs/Makefile 只需 `obj-$(CONFIG_NOMOUNT) += nomount/`, fs/Kconfig 只需 source 子目录 Kconfig。
+# 不用符号链接: CI 内核树每次重新克隆, 且符号链接指向工作区外会破坏 out-of-tree 构建。
 stage_nomount() {
-  log "=========== [4/7] 应用 NoMount 补丁 ==========="
+  log "=========== [4/7] 集成 NoMount $NOMOUNT_VERSION (fs/nomount/) ==========="
   local src="$WORKSPACE/third_party/nomount"
-  local patch="$src/nomount-6.6.patch"
+  local dst="$COMMON/fs/nomount"
+  local f
   [ -d "$src" ] || die "NoMount 资产缺失: $src"
-  [ -f "$patch" ] || die "NoMount hook 补丁缺失: $patch"
+  for f in Kconfig Makefile nomount.c nomount.h; do
+    [ -f "$src/$f" ] || die "NoMount $NOMOUNT_VERSION 资产缺失: $src/$f"
+  done
 
-  apply_patch_file "$patch" "NoMount hook 补丁" || true
+  # 清理 v1.x 的单文件布局 (否则 fs/Makefile 里两条 NOMOUNT 目标会同时生效, 重复定义符号)
+  rm -rf "$dst"
+  for f in fs/nomount.c fs/nomount.h include/linux/nomount.h; do
+    if [ -e "$COMMON/$f" ]; then
+      rm -f "$COMMON/$f"
+      warn "已清理 v1.x 遗留文件: $f"
+    fi
+  done
 
-  # 补丁不含源码: nomount.c 用 #include "nomount.h" (相对路径), 头文件另放 include/linux
-  cp -f "$src/nomount.c" "$COMMON/fs/nomount.c"
-  cp -f "$src/nomount.h" "$COMMON/fs/nomount.h"
-  cp -f "$src/nomount.h" "$COMMON/include/linux/nomount.h"
-  ok "NoMount 源码已就位 (fs/nomount.c + fs/nomount.h + include/linux/nomount.h)"
+  mkdir -p "$dst"
+  cp -f "$src/Kconfig" "$src/Makefile" "$src/nomount.c" "$src/nomount.h" "$dst/"
+  ok "NoMount 源码已就位 (fs/nomount/{Kconfig,Makefile,nomount.c,nomount.h})"
 
-  # 兜底修复: SUSFS 与 NoMount 都要往 fs/Makefile 同一处插一行, 模糊匹配可能漏掉
+  # fs/Makefile: 去掉 v1 的 nomount.o 目标, 补上目录目标 (SUSFS 等也往同一处插行, 故逐行判断)
   local mk="$COMMON/fs/Makefile"
-  if ! grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount.o' "$mk"; then
-    warn "fs/Makefile 未包含 NOMOUNT 目标, 手工补齐"
-    printf '\nobj-$(CONFIG_NOMOUNT) += nomount.o\n' >> "$mk"
+  if grep -qE '^[[:space:]]*obj-\$\(CONFIG_NOMOUNT\)[[:space:]]*\+=[[:space:]]*nomount\.o[[:space:]]*$' "$mk"; then
+    sed -i -E '/^[[:space:]]*obj-\$\(CONFIG_NOMOUNT\)[[:space:]]*\+=[[:space:]]*nomount\.o[[:space:]]*$/d' "$mk"
+    warn "fs/Makefile: 已移除 v1.x 的 obj-\$(CONFIG_NOMOUNT) += nomount.o"
   fi
-  local fs_kconfig="$COMMON/fs/Kconfig"
-  if ! grep -qF 'config NOMOUNT' "$fs_kconfig"; then
-    warn "fs/Kconfig 未包含 config NOMOUNT, 手工补齐"
-    insert_before_last_endmenu "$fs_kconfig" <<'EOF'
-config NOMOUNT
-	bool "NoMount Path Redirection Subsystem"
-	default y
-	help
-	  NoMount allows path redirection and virtual file injection
-	  without mounting filesystems. Useful for systemless modifications.
-EOF
+  if grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount/' "$mk"; then
+    ok "fs/Makefile: NOMOUNT 目录目标已存在 (幂等)"
+  else
+    printf '\nobj-$(CONFIG_NOMOUNT) += nomount/\n' >> "$mk"
+    ok "fs/Makefile: 已追加 obj-\$(CONFIG_NOMOUNT) += nomount/"
   fi
 
-  verify_marker fs/namei.c 'nomount_handle_getname' 'NoMount getname hook'
-  verify_marker fs/namei.c 'nomount_handle_permission' 'NoMount permission hook'
-  verify_marker fs/d_path.c 'nomount_handle_dpath' 'NoMount d_path hook'
-  verify_marker fs/stat.c 'nomount_handle_getattr' 'NoMount getattr hook'
-  verify_marker fs/readdir.c 'nomount_handle_iterate_dir' 'NoMount readdir hook'
-  verify_marker fs/proc/task_mmu.c 'nomount_spoof_mmap_metadata' 'NoMount mmap 元数据伪装'
-  verify_marker fs/statfs.c 'nomount_spoof_statfs' 'NoMount statfs 伪装'
-  verify_marker fs/Makefile 'obj-$(CONFIG_NOMOUNT) += nomount.o' 'NoMount 编译目标'
-  verify_marker fs/Kconfig 'config NOMOUNT' 'NoMount Kconfig'
-  ok "NoMount 集成完成"
+  # fs/Kconfig: v2.x 的 NOMOUNT 定义在 fs/nomount/Kconfig 里, 主 Kconfig 只 source 该目录
+  local fs_kconfig="$COMMON/fs/Kconfig"
+  if grep -qF 'source "fs/nomount/Kconfig"' "$fs_kconfig"; then
+    ok "fs/Kconfig: source \"fs/nomount/Kconfig\" 已存在 (幂等)"
+  else
+    insert_before_last_endmenu "$fs_kconfig" <<'EOF'
+source "fs/nomount/Kconfig"
+EOF
+    ok "fs/Kconfig: 已插入 source \"fs/nomount/Kconfig\""
+  fi
+  # 旧版内联的 config NOMOUNT 块会与新 Kconfig 重复定义, 命中即报错并中止
+  if grep -qE '^config NOMOUNT$' "$fs_kconfig"; then
+    die "fs/Kconfig 仍含内联的 config NOMOUNT (与 fs/nomount/Kconfig 重复定义), 请先清理基线"
+  fi
+
+  verify_marker fs/nomount/nomount.c 'NM_MAGIC_SIG' 'NoMount v22 payload 魔数'
+  verify_marker fs/nomount/nomount.c 'register_key_type(&nm_key_type)' 'NoMount add_key IPC 注册'
+  verify_marker fs/nomount/nomount.c 'NoMount Path Redirection VFS Subsystem' 'NoMount 模块描述'
+  verify_marker fs/nomount/nomount.h 'NOMOUNT_BASE_VERSION "22"' 'NoMount 协议版本 v22'
+  verify_marker fs/nomount/Kconfig 'config NOMOUNT' 'NoMount Kconfig 片段'
+  verify_marker fs/nomount/Makefile 'obj-$(CONFIG_NOMOUNT) += nomount.o' 'NoMount 子目录 Makefile'
+  verify_marker fs/Makefile 'obj-$(CONFIG_NOMOUNT) += nomount/' 'NoMount 编译目标'
+  verify_marker fs/Kconfig 'source "fs/nomount/Kconfig"' 'NoMount Kconfig 挂载'
+  ok "NoMount $NOMOUNT_VERSION 集成完成 (无 hook 补丁, 全部能力在 fs/nomount/nomount.c 内)"
 }
 
 # ============================================================================
@@ -631,8 +652,18 @@ stage_defconfig() {
     echo "SUSFS_REPO=$SUSFS_REPO"
     echo "SUSFS_BRANCH=$SUSFS_BRANCH"
     echo "SUSFS_COMMIT=${SUSFS_COMMIT:-disabled}"
-    echo "NOMOUNT=$([ "$ENABLE_NOMOUNT" = 1 ] && echo enabled || echo disabled)"
-    echo "NOMOUNT_SHA256=$(sha256sum "$WORKSPACE/third_party/nomount/nomount.c" | cut -d' ' -f1)"
+    if [ "$ENABLE_NOMOUNT" = 1 ]; then
+      echo "NOMOUNT=enabled"
+      echo "NOMOUNT_VERSION=$NOMOUNT_VERSION"
+      echo "NOMOUNT_PROTOCOL=22"   # fs/nomount/nomount.h: NOMOUNT_BASE_VERSION
+      # 源码来自 fs/nomount/ 的落地副本 (与 third_party/nomount 一致), 单一来源避免漏更新
+      echo "NOMOUNT_SHA256=$(sha256sum "$COMMON/fs/nomount/nomount.c" | cut -d' ' -f1)"
+    else
+      echo "NOMOUNT=disabled"
+      echo "NOMOUNT_VERSION=disabled"
+      echo "NOMOUNT_PROTOCOL=disabled"
+      echo "NOMOUNT_SHA256=disabled"
+    fi
     echo "ADIOS=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
     echo "ADIOS_LOCK=$([ "$ENABLE_ADIOS" = 1 ] && echo "$ADIOS_LOCK" || echo n/a)"
     echo "UNICODE_BYPASS=$([ "$ENABLE_UNICODE" = 1 ] && echo enabled || echo disabled)"
@@ -671,7 +702,7 @@ log "================ 集成摘要 ================"
 log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, 无条件生效; KSU 侧无开关/垫片)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
-[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount  : third_party/nomount (hook 补丁 + 源码)"
+[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount  : third_party/nomount $NOMOUNT_VERSION -> fs/nomount/ (目录式内建, v22 add_key IPC)"
 [ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (调度器 + 默认调度器注入 + 锁定=$ADIOS_LOCK)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过)"
 log "内核树改动: $(git -C "$COMMON" status --porcelain | wc -l) 个文件"

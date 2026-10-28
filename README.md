@@ -94,7 +94,7 @@ scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + NoMount + ADIOS + Unicode
 third_party/AnyKernel3/        打包模板 (迁移自老项目)
 third_party/adios/             ADIOS IO 调度器补丁 (迁移自老项目)
 third_party/fusebpf/           fusebpf 内核侧补丁 v3 (lookup revalidate + EEXIST 归一化)
-third_party/nomount/           NoMount hook 补丁 + nomount.c/h 源码
+third_party/nomount/           NoMount v2.2.0 内核源 (Kconfig/Makefile/nomount.c+nomount.h)
 third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 归一化数据表)
 ```
 
@@ -108,7 +108,8 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
   上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
-  50_add_susfs 补丁 + 源码）→ NoMount（hook 补丁 + 源码）→ ADIOS（调度器补丁 +
+  50_add_susfs 补丁 + 源码）→ NoMount v2.2.0（目录式内建 `fs/nomount/`，dentry/inode ops
+  劫持 + `add_key` 单页 payload IPC；v2 起不再需要 VFS hook 补丁）→ ADIOS（调度器补丁 +
   `elevator_get_default()` 强制 adios + `elevator_change()` 拦截 `cpq`）→ Unicode 绕过
   （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
 - **fusebpf v3**：`third_party/fusebpf/fusebpf-lookup-revalidate.patch` 是上游式
@@ -122,7 +123,8 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
   `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。
 - **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
-  `kernelsu_init`、`susfs is initialized`、`nm_rules` —— 防止“补丁打上了但没编译进去”。
+  `kernelsu_init`、`susfs is initialized`、`NoMount Path Redirection VFS Subsystem` ——
+  防止“补丁打上了但没编译进去”（NoMount v2.2.0 已无 v1 的 `nm_rules` slab 名）。
 - **产物**：`android15-6.6.<sub>-<snapshot>-AnyKernel3.zip`、裸 `Image-6.6.<sub>`、
   `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
 
