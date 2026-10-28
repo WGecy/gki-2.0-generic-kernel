@@ -55,8 +55,11 @@
    KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig` 然后 `... -j$(nproc) Image`
    （单片内核 + LTO thin + AutoFDO，与 `scripts/build.sh` 一致）。
 7. **校验**：`kernel.release` / Image 版本串 / `vmlinux` 中 `kernelsu_init`、
-   `susfs is initialized`、`NoMount Path Redirection VFS Subsystem` 三项内建标记
-   （NoMount v2.2.0 已无 v1 的 `nm_rules` kmem_cache 名）；另校验 `CONFIG_NOMOUNT=y` 时
+   `susfs is initialized` 两项内建标记；NoMount v2.2.0 已无 v1 的 `nm_rules` kmem_cache 名，
+   改为三条判据任一命中即通过：`vmlinux` 的 `nomount_init` 符号、`.rodata` 的
+   `NoMount: Loaded successfully`、`out/modules.builtin.modinfo` 的
+   `NoMount Path Redirection VFS Subsystem`（`MODULE_DESCRIPTION` 串只进 `.modinfo`，
+   而该段被链接脚本 `DISCARDS` 丢弃，不能当唯一判据）；另校验 `CONFIG_NOMOUNT=y` 时
    `fs/nomount/` 四件套齐全、`fs/Kconfig` 已 `source "fs/nomount/Kconfig"`、
    `fs/Makefile` 有 `obj-$(CONFIG_NOMOUNT) += nomount/`。
 8. **打包**：AnyKernel3 目录内放入 `Image` 后 zip。

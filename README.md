@@ -123,8 +123,13 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
   `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。
 - **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
-  `kernelsu_init`、`susfs is initialized`、`NoMount Path Redirection VFS Subsystem` ——
-  防止“补丁打上了但没编译进去”（NoMount v2.2.0 已无 v1 的 `nm_rules` slab 名）。
+  `kernelsu_init`、`susfs is initialized` —— 防止“补丁打上了但没编译进去”。
+  NoMount v2.2.0 已无 v1 的 `nm_rules` slab 名，改为三条判据**任一命中即通过**：
+  `vmlinux` 里的 `nomount_init` 符号（`fs_initcall` 注册，必然保留）、
+  `.rodata` 里的 `NoMount: Loaded successfully`（`nm_info` 前缀 + 格式串编译期拼接）、
+  或 `out/modules.builtin.modinfo` 里的 `NoMount Path Redirection VFS Subsystem`。
+  **`MODULE_DESCRIPTION` 串不能当唯一判据**：它只落在 `.modinfo` 段，而该段被
+  `include/asm-generic/vmlinux.lds.h` 的 `COMMON_DISCARDS` 在链接最终 `vmlinux` 时丢弃。
 - **产物**：`android15-6.6.<sub>-<snapshot>-AnyKernel3.zip`、裸 `Image-6.6.<sub>`、
   `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
 

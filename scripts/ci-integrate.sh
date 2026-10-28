@@ -447,7 +447,12 @@ EOF
 
   verify_marker fs/nomount/nomount.c 'NM_MAGIC_SIG' 'NoMount v22 payload 魔数'
   verify_marker fs/nomount/nomount.c 'register_key_type(&nm_key_type)' 'NoMount add_key IPC 注册'
-  verify_marker fs/nomount/nomount.c 'NoMount Path Redirection VFS Subsystem' 'NoMount 模块描述'
+  # workflow 的 vmlinux 校验查的是下面这条 printk 字面量 (nm_info 的前缀 "NoMount: "
+  # 在编译期拼进去, 故 .rodata 里是 "NoMount: Loaded successfully"); 必须与 build.yml 同步。
+  # MODULE_DESCRIPTION 只进 .modinfo, 而 COMMON_DISCARDS 会在链接 vmlinux 时丢掉该段,
+  # 所以它只能证明源码是 v2.2.0, 不能拿去做 vmlinux 标记。
+  verify_marker fs/nomount/nomount.c 'nm_info("Loaded successfully' 'NoMount 初始化日志串 (vmlinux 校验依据)'
+  verify_marker fs/nomount/nomount.c 'NoMount Path Redirection VFS Subsystem' 'NoMount 模块描述 (仅 .modinfo)'
   verify_marker fs/nomount/nomount.h 'NOMOUNT_BASE_VERSION "22"' 'NoMount 协议版本 v22'
   verify_marker fs/nomount/Kconfig 'config NOMOUNT' 'NoMount Kconfig 片段'
   verify_marker fs/nomount/Makefile 'obj-$(CONFIG_NOMOUNT) += nomount.o' 'NoMount 子目录 Makefile'

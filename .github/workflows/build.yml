@@ -331,11 +331,33 @@ jobs:
           echo "版本串校验通过: $KREL"
 
           # 内建集成校验: 防止"补丁打上了但没编译进去"
+          # 校验只能在 vmlinux 的符号表 (.symtab) 和 .rodata 字面量里找东西:
+          #   MODULE_DESCRIPTION / MODULE_VERSION 这类 MODULE_* 串只落在 .modinfo 段,
+          #   include/asm-generic/vmlinux.lds.h 的 COMMON_DISCARDS 含 *(.modinfo),
+          #   arch/arm64/kernel/vmlinux.lds.S:161 又调用了 DISCARDS, 于是 .modinfo 在链接
+          #   最终 vmlinux 时被整段丢弃 (只有丢弃前的 vmlinux.o / modules.builtin.modinfo 才有),
+          #   所以千万别用 MODULE_DESCRIPTION 串做 vmlinux 校验 —— 一定 grep 不到。
           nm out/vmlinux | grep -q 'kernelsu_init' || { echo "::error::vmlinux 缺少 kernelsu_init —— KernelSU 内建集成失败"; exit 1; }
           strings out/vmlinux | grep -qF 'susfs is initialized' || { echo "::error::vmlinux 缺少 SUSFS 初始化串 —— SUSFS 未编译进去"; exit 1; }
-          # NoMount v2.2.0 起不再有 v1 的 kmem_cache 名 "nm_rules"; 改用模块描述串识别
-          strings out/vmlinux | grep -qF 'NoMount Path Redirection VFS Subsystem' \
-            || { echo "::error::vmlinux 缺少 NoMount 标记 —— NoMount 未编译进去"; exit 1; }
+          # NoMount: v2.2.0 已无 v1 的 kmem_cache 名 "nm_rules"。三条判据任一命中即通过 ——
+          #   1) nomount_init 符号: nomount.c:1958 定义、:1990 用 fs_initcall 注册, 地址被
+          #      记进 .initcall 表就必然保留符号, 与上面 kernelsu_init 同一种查法;
+          #   2) 初始化日志串: nm_info 的前缀 "NoMount: " (nomount.h:39) 与 nomount.c:1964 的
+          #      "Loaded successfully\n" 在编译期拼成一条字面量 (printk 常参不会把格式串优化掉);
+          #   3) modules.builtin.modinfo: 由 vmlinux.o 的 .modinfo 段抽出, 含 v2.2.0 的
+          #      MODULE_DESCRIPTION (nomount.c:1980)。注意最终 vmlinux 里没有这一段, 所以它
+          #      不能当唯一判据, 只作兜底。
+          # 前两条是"链接进 vmlinux 就一定看得到"的东西, OR 起来是为了不因单个符号/字符串的
+          # 优化或改名把构建卡死 (这条校验的职责是"漏编译", 不是"逐字节比对")。
+          NM_OK=0 NM_WHY=''
+          if nm out/vmlinux | grep -qE '(^|[[:space:]])nomount_init$'; then NM_OK=1; NM_WHY='nomount_init 符号'; fi
+          if [ "$NM_OK" -eq 0 ] && strings out/vmlinux | grep -qF 'NoMount: Loaded successfully'; then NM_OK=1; NM_WHY='NoMount: Loaded successfully'; fi
+          if [ "$NM_OK" -eq 0 ] && grep -qF 'NoMount Path Redirection VFS Subsystem' out/modules.builtin.modinfo 2>/dev/null; then NM_OK=1; NM_WHY='modules.builtin.modinfo 描述串'; fi
+          if [ "$NM_OK" -ne 1 ]; then
+            echo "::error::vmlinux 中找不到 NoMount 标记 (nomount_init 符号 / 初始化日志串 / builtin.modinfo 描述串均无) —— NoMount 未编译进去"
+            exit 1
+          fi
+          echo "NoMount 内建标记校验通过: $NM_WHY"
           echo "集成校验通过: KernelSU (built-in) + SUSFS + NoMount 均已链接进 vmlinux"
 
       # ==================== 打包 ====================
