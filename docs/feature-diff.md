@@ -34,8 +34,8 @@
 
 | 功能 | 老项目实现 | 新项目实现 | 状态 |
 | --- | --- | --- | --- |
-| ADIOS IO 调度器 | `patches/04-block-io/14-adios.patch` + `build.py step06b`（defconfig）+ `build.py step07`/`build.yml` 的 `elevator.c` 拦截 | `third_party/adios/14-adios.patch` + `stage_adios()`（应用补丁 + `CONFIG_MQ_IOSCHED_ADIOS=y`）；`adios_lock` 非 `off` 时才额外注入 `elevator_get_default()` + `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y` | ✅ 2026-09-22 迁移 |
-| └ ADIOS **强制默认调度器** | 老项目无条件注入 `elevator_get_default()` | 仅 `--adios-lock=cpq`/`all` 时注入；`off`（默认）不碰 `elevator.c`，默认仍是内核自带 `mq-deadline` | ✅ 2026-10-29 默认改 off |
+| ADIOS IO 调度器 | `patches/04-block-io/14-adios.patch` + `build.py step06b`（defconfig）+ `build.py step07`/`build.yml` 的 `elevator.c` 拦截 | `third_party/adios/14-adios.patch` + `stage_adios()`（应用补丁 + 注入 `elevator_get_default()` + `CONFIG_MQ_IOSCHED_ADIOS=y` / `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`） | ✅ 2026-09-22 迁移 |
+| └ ADIOS **强制默认调度器** | 老项目无条件注入 `elevator_get_default()` | 同样无条件注入，默认调度器恒为 `adios`（与 `adios_lock` 无关，只有 `--no-adios` 才不编） | ✅ 2026-10-29 明确语义 |
 | └ ADIOS **运行时禁止切换调度器**（"防 init.qti 切 cpq"） | 老项目仅 `fastbuild.yml` 有（锚点是 5.x 风格，6.6 命中不了）；`build.py` 896 行注明「elevator_switch: 拦截已禁用（2026-08-18，管理器 IO 调度器切换功能需要自由切换）」 | `inject_adios_lock()`：在 6.6 的 `elevator_change()` 内注入拦截；`--adios-lock=off`（默认，不拦）/`cpq`/`all`，工作流输入 `adios_lock` | ✅ 2026-09-22 迁移（2026-10-29 默认改 off） |
 | SSG IO 调度器（三星） | `patches/04-block-io/15-ssg.patch` + `CONFIG_MQ_IOSCHED_SSG=y` | — | ❌ |
 | UFS fastdiscard | `patches/04-block-io/07-ufs-fastdiscard.patch` | — | ❌ |
@@ -142,24 +142,25 @@ on property:persist.sys.stability.smartfocusio.v1=off
 - 全系统只有这一个 rc 写调度器；`cpq` 是厂商模块（`cpq 36864 1`，被 `xr_qi`/`vip_sched`/`perf_actuator` 依赖），dmesg `[0.548920] io scheduler cpq registered`；
 - 调度器有"两段"：队列建立时的默认值（`elevator_init_mq()` → `elevator_get_default()`，我们控制）与运行时切换（`elv_iosched_store()` → `elevator_change()`，需要拦截）。6.6 内核**没有** `elevator_set_default()` 之类接口，所以"默认被改成 cpq"只能是这种 sysfs 写入。
 
-**处理**（工作流输入 `adios_lock`，默认 `off`）：
+**处理**：默认调度器由「是否编 ADIOS」决定，拦截由 `adios_lock` 决定（默认 `off`）：
 
-| 模式 | `elevator_get_default()` | `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` | `elevator_change()` | 默认调度器 |
-| --- | --- | --- | --- | --- |
-| `off`（默认） | 不注入（`elevator.c` 与上游逐字节一致） | 关闭 | 不注入 | 内核自带 `mq-deadline` |
-| `cpq` | 注入 → `return elevator_find_get(q, "adios")` | 打开 | 拒绝切到 `cpq`（`pr_info_once` 后 `return 0`） | `adios` |
-| `all` | 注入 → adios | 打开 | 拒绝任何非 `adios` 切换 | `adios` |
+| `adios_lock` | `elevator_get_default()` | `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` | `elevator_change()` | 默认调度器 | 开机后 init.qti 写 cpq |
+| --- | --- | --- | --- | --- | --- |
+| `off`（默认） | 注入 → `return elevator_find_get(q, "adios")` | 打开 | 不注入 | `adios` | 生效，被切成 `cpq` |
+| `cpq` | 注入 → adios | 打开 | 拒绝切到 `cpq`（`pr_info_once` 后 `return 0`） | `adios` | 被拦下，保持 `adios` |
+| `all` | 注入 → adios | 打开 | 拒绝任何非 `adios` 切换 | `adios` | 被拦下 |
 
-`off` 只关掉「强制 + 拦截」两处 `elevator.c` 注入与 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS`；
-`block/adios.c` 与 `CONFIG_MQ_IOSCHED_ADIOS=y` 仍然保留（调度器可选，只是不当默认）。
-要连调度器都不编，用 `--no-adios`。
+`off` 只是关掉 `elevator_change()` 拦截；两处注入与 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` 在所有模式下都打开。
+要连调度器都不编、默认仍走内核自带 `mq-deadline`，用 `--no-adios`。
 
-**刷机后验证**（仅 `cpq`/`all`）：
+**刷机后验证**（`cat /sys/block/sda/queue/scheduler` 三种模式开机后都应为 `[adios]`；
+`cpq`/`all` 下 init.qti 的写入会被拦掉）：
 
 ```bash
 cat /sys/block/sda/queue/scheduler          # 期望 [adios]
-dmesg | grep -i 'ADIOS locked'              # 期望 elevator: blocked scheduler switch to cpq (ADIOS locked)
+dmesg | grep -i 'ADIOS locked'              # 仅 cpq/all: 期望 elevator: blocked scheduler switch to cpq (ADIOS locked)
 ```
 
 **代价**：小米 smartfocusio 的调度器侧（cpq + `/dev/blkio/*/blkio.cpq.level`）在 `cpq`/`all` 下不再生效
-（相关写入变成空转）；默认 `off` 则完全保持原厂行为。
+（相关写入变成空转）；默认 `off` 不拦，init.qti 仍可把调度器切成 `cpq`（此时 smartfocusio 正常，
+但 adios 被切走）。

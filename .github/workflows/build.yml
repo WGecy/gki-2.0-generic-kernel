@@ -67,7 +67,7 @@ on:
         type: string
         default: "gki-android15-6.6"
       adios_lock:
-        description: "ADIOS 锁定: off(不拦截也不强制,默认) / cpq(只拦 cpq) / all(只允许 adios); 非 off 时才强制 adios 为默认调度器"
+        description: "ADIOS 运行时切换拦截: off(不拦截,默认) / cpq(只拦 cpq) / all(只允许 adios); 不影响默认调度器, 始终为 adios"
         required: false
         type: string
         default: "off"
@@ -260,21 +260,19 @@ jobs:
                    CONFIG_MQ_IOSCHED_ADIOS=y; do
             grep -qx "$c" out/.config || { echo "::error::配置未生效: $c"; exit 1; }
           done
-          # ADIOS 默认调度器只在 adios_lock != off 时期望打开; off = 不强制
-          if [ "$ADIOS_LOCK" != "off" ]; then
-            grep -qx 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y' out/.config \
-              || { echo "::error::配置未生效: CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y (adios_lock=$ADIOS_LOCK)"; exit 1; }
-          else
-            grep -qx 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y' out/.config \
-              && { echo "::error::adios_lock=off 但 CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y 仍被打开"; exit 1; }
-            true
-          fi
-          # adios_lock=off 时 elevator.c 必须保持上游原样 (没有强制默认/拦截注入)
+          # ADIOS 默认调度器与 adios_lock 无关: 只要编了 ADIOS 就强制为 adios
+          grep -qx 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y' out/.config \
+            || { echo "::error::配置未生效: CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y (adios_lock=$ADIOS_LOCK)"; exit 1; }
+          # elevator.c 必须注入"强制 adios 为默认调度器"
+          grep -qF 'GKI-ADIOS-DEFAULT-BEGIN' block/elevator.c \
+            || { echo "::error::block/elevator.c 缺少 ADIOS 默认调度器注入"; exit 1; }
+          # 运行时切换拦截只由 adios_lock 决定
           if [ "$ADIOS_LOCK" = "off" ]; then
-            ! grep -qF 'GKI-ADIOS-DEFAULT-BEGIN' block/elevator.c \
-              || { echo "::error::adios_lock=off 但 block/elevator.c 仍存在强制默认调度器注入"; exit 1; }
             ! grep -qF 'GKI-ADIOS-LOCK-BEGIN' block/elevator.c \
               || { echo "::error::adios_lock=off 但 block/elevator.c 仍存在运行时切换拦截"; exit 1; }
+          else
+            grep -qF 'GKI-ADIOS-LOCK-BEGIN' block/elevator.c \
+              || { echo "::error::adios_lock=$ADIOS_LOCK 但 block/elevator.c 缺少运行时切换拦截"; exit 1; }
           fi
           # fusebpf: 修复在 v3 内核侧补丁里无条件生效 (KSU 侧已无 KSU_FUSEBPF_FIX/运行时开关),
           # 所以这里直接校验内核侧 v3 落点, 防止"补丁没打上但没人发现"

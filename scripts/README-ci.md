@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU-Ultra`） |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
-| `adios_lock` | `off` | ADIOS 调度器锁定：`off`=不拦截也不强制（默认，`elevator.c` 保持上游原样）/ `cpq`=强制 adios 为默认且只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=强制 adios 且只允许 adios |
+| `adios_lock` | `off` | ADIOS 运行时切换拦截（不影响默认调度器，adios 恒为默认）：`off`=不拦截（默认，允许 init.qti 等把调度器切走）/ `cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios |
 | `custom_suffix` | 空 | 自定义内核后缀，插在 `-android15-8` 与 `-4k` 之间，如 `-test-01` → `6.6.158-android15-8-test-01-4k`；留空时取默认值 `-WGecy` → `6.6.158-android15-8-WGecy-4k` |
 | `build_time` | `N` | `N`/留空 = 当前 UTC，否则写入 `KBUILD_BUILD_TIMESTAMP` |
 
@@ -116,25 +116,21 @@
 5. **ADIOS IO 调度器**（本仓库 `third_party/adios`，迁移自老项目 `features.adios`）
    - 应用 `14-adios.patch`：新增 `block/adios.c`，并注册 `block/Kconfig.iosched`
      （`MQ_IOSCHED_ADIOS` / `MQ_IOSCHED_DEFAULT_ADIOS`）与 `block/Makefile`
-   - **`--adios-lock=off`（默认）**：只应用补丁 + 打开 `CONFIG_MQ_IOSCHED_ADIOS=y`，
-     `block/elevator.c` **完全不动**（默认调度器仍是内核自带的 `mq-deadline`），
-     且 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` 显式关闭；adios 仍可作为可选调度器手动切换
-   - **`--adios-lock=cpq|all`**：额外做两处注入（两者可独立撤销，见 `strip_adios_hooks()`）
-     - 注入 `block/elevator.c` 的 `elevator_get_default()`：把硬编码的 `mq-deadline`
-       兜底包成 `#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS → return elevator_find_get(q, "adios")`
-       （`GKI-ADIOS-DEFAULT-BEGIN/END` 标记；幂等，锚点找不到会明确失败），同时
-       defconfig 打开 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`
-     - **运行时切换拦截**（`inject_adios_lock()`，`GKI-ADIOS-LOCK-BEGIN/END`）：在
-       `elevator_change()` 里拒绝切换 —— `cpq` = 只拒绝切成 `cpq`，`all` = 只允许 adios。
-       真机排查结论：澎湃OS4（Android 17）的 `/vendor/etc/init/hw/init.qti.kernel.rc` 在
-       `on boot && property:persist.sys.stability.smartfocusio.v1=on` 时**每次开机**写
-       `write /sys/block/${dev.mnt.rootdisk.data}/queue/scheduler cpq`（rootdisk.data=sda/userdata），
-       所以只注入"默认值"挡不住
-   - defconfig：`CONFIG_MQ_IOSCHED_ADIOS=y` 恒开；`CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`
-     仅在非 `off` 时打开（后者 `depends on MQ_IOSCHED_ADIOS=y`，必须都是 y）；
-     `--no-adios` 会显式关掉这两项并跳过补丁
-   - 刷机后验证（仅 `cpq`/`all`）：`cat /sys/block/sda/queue/scheduler` 期望 `[adios]`；
-     `dmesg | grep 'ADIOS locked'` 期望出现 `elevator: blocked scheduler switch to cpq`
+   - **默认调度器恒为 adios**（与 `adios_lock` 无关）：`inject_adios_default()` 把
+     `block/elevator.c` 里 `elevator_get_default()` 硬编码的 `mq-deadline` 兜底包成
+     `#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS → return elevator_find_get(q, "adios")`
+     （`GKI-ADIOS-DEFAULT-BEGIN/END` 标记；幂等，锚点找不到会明确失败），
+     defconfig 同时打开 `CONFIG_MQ_IOSCHED_ADIOS=y` 与 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`
+   - **运行时切换拦截**由 `--adios-lock` 决定（`inject_adios_lock()`，`GKI-ADIOS-LOCK-BEGIN/END`）：
+     `off`（默认）= 不注入，允许 init/服务自由切换；`cpq` = 只拒绝切成 `cpq`；
+     `all` = 只允许 adios。换模式时旧块会被剥掉（`off` 即彻底移除），可反复切换。
+     真机排查结论：澎湃OS4（Android 17）的 `/vendor/etc/init/hw/init.qti.kernel.rc` 在
+     `on boot && property:persist.sys.stability.smartfocusio.v1=on` 时**每次开机**写
+     `write /sys/block/${dev.mnt.rootdisk.data}/queue/scheduler cpq`（rootdisk.data=sda/userdata），
+     所以只注入"默认值"挡不住 —— 要保住 adios 得把 `adios_lock` 设为 `cpq` 或 `all`
+   - `--no-adios` 会显式关掉两项 config 并跳过补丁（此时 `elevator.c` 保持上游原样）
+   - 刷机后验证：三种模式下 `cat /sys/block/sda/queue/scheduler` 开机后都应为 `[adios]`；
+     `cpq`/`all` 下 `dmesg | grep 'ADIOS locked'` 会出现 `elevator: blocked scheduler switch to cpq`
 6. **Unicode 零宽字符绕过**（本仓库 `third_party/unicode_bypass`，迁移自 `features.unicode_bypass`）
    - 应用 `unicode_bypass_fix_6.1+.patch`（2026-10-02 重新生成的版本：补上 `index` 行、
      hunk 上下文带函数名，便于 `git apply --check` / 三方合并）：改 `fs/unicode/mkutf8data.c`
@@ -144,8 +140,7 @@
    - defconfig：确保 `CONFIG_UNICODE=y`；`--no-unicode` 可跳过
 7. **defconfig**：`CONFIG_KSU=y`、`CONFIG_KSU_NETISOLATE=y`、`CONFIG_NOMOUNT=y`、
    `CONFIG_KSU_SUSFS*` 10 项、`CONFIG_MQ_IOSCHED_ADIOS=y`、
-   `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`（仅 `adios_lock` 非 `off`；`off` 时显式
-   `# ... is not set`）、`CONFIG_UNICODE=y`
+   `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`、`CONFIG_UNICODE=y`
    （已启用跳过 / `# ... is not set` 原位替换 / 不存在则追加）；
    fusebpf 已无配置项（内核侧补丁本身即开关）
 8. **构建信息**：`$GKI_ROOT/ci-build-info.env`（KSU/SUSFS commit、fusebpf/NoMount/ADIOS/

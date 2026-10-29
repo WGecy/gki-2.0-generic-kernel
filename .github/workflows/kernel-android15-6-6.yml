@@ -26,7 +26,7 @@ on:
         type: string
         default: "gki-android15-6.6"
       adios_lock:
-        description: "ADIOS 调度器锁定 (off=不拦截也不强制 / cpq=只拦 cpq / all=只允许 adios)"
+        description: "ADIOS 调度器锁定 (off=不拦截 / cpq=只拦 cpq / all=只允许 adios); 默认调度器始终为 adios"
         required: true
         type: choice
         options:

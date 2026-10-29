@@ -9,8 +9,8 @@
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
 #    4. 集成 NoMount v2.2.0 (third_party/nomount -> fs/nomount/ 目录式内建;
 #       v2.x 已无 VFS hook 补丁, 改为 dentry/inode ops 劫持 + add_key 单页 payload IPC)
-#    5. 应用 ADIOS IO 调度器 (third_party/adios); 默认 off = 既不强制默认也不拦截
-#       (--adios-lock=cpq|all 时才会改 elevator.c 的 elevator_get_default()/elevator_change())
+#    5. 应用 ADIOS IO 调度器 (third_party/adios) 并强制其为默认调度器 (elevator_get_default());
+#       运行时切换拦截由 --adios-lock 决定: off(默认)=不拦截, cpq=只拦 cpq, all=只允许 adios
 #    6. 应用 Unicode 零宽字符绕过 (third_party/unicode_bypass)
 #    7. 写入 KSU / SUSFS / NoMount / ADIOS 的 defconfig 配置项
 #  脚本幂等: 重复执行只更新 KernelSU/SUSFS 源码, 已应用的补丁自动跳过。
@@ -34,11 +34,11 @@
 #    --no-nomount          跳过 NoMount
 #    --no-adios            跳过 ADIOS IO 调度器
 #    --adios-lock MODE     ADIOS 运行时切换拦截: off|cpq|all (默认 off)
+#                          注意: 只影响"拦截", 不影响默认调度器 —— 只要没加 --no-adios,
+#                          elevator_get_default() 都会被改成 adios
+#                          off = 不拦截 (init/服务可自由切换)
 #                          cpq = 只拒绝切到 cpq (澎湃OS4 的 init.qti 会写 cpq)
 #                          all = 任何非 adios 的切换请求都拒绝
-#                          off = 不拦截, 也不强制 (不注入 elevator_get_default(),
-#                                不打开 CONFIG_MQ_IOSCHED_DEFAULT_ADIOS;
-#                                adios 仍编进内核, 可手动切换到)
 #    --no-unicode          跳过 Unicode 零宽字符绕过
 #    --allow-rej           允许存在 .rej (默认: 出现 .rej 即失败)
 #    -h | --help           显示帮助
@@ -467,28 +467,6 @@ EOF
 # ============================================================================
 #  5. ADIOS IO 调度器 (third_party/adios, 迁移自老项目 features.adios)
 # ============================================================================
-strip_adios_hooks() {
-  # 幂等: 把本脚本注入过的东西 (默认调度器 + 运行时锁定) 全部剥掉,
-  # 使 block/elevator.c 回到上游/基线状态。--adios-lock=off 时必须调用,
-  # 否则 --adios-lock 由 cpq/all 改成 off 时会残留上一轮的注入。
-  local ev="$COMMON/block/elevator.c"
-  [ -f "$ev" ] || die "block/elevator.c 不存在"
-  grep -qF 'GKI-ADIOS-DEFAULT-BEGIN' "$ev" || return 0
-  local tmp
-  tmp="$(mktemp)"
-  # 注入块把原始的 mq-deadline 兜底行包在 #else 分支里, 所以剥块时必须把它捡回来,
-  # 否则会连同 upstream 的兜底一起删掉 (编译能过但默认调度器变成 NULL 行为)。
-  awk '
-    /GKI-ADIOS-DEFAULT-BEGIN/ { skip = 1; next }
-    /GKI-ADIOS-DEFAULT-END/   { skip = 0; next }
-    skip && /return elevator_find_get\(q, "mq-deadline"\);/ { print; next }
-    skip { next }
-    { print }
-  ' "$ev" > "$tmp"
-  mv "$tmp" "$ev"
-  ok "block/elevator.c: 已还原 elevator_get_default() (off 模式不强制默认调度器)"
-}
-
 inject_adios_default() {
   # elevator_get_default() 里 mq-deadline 是硬编码兜底; 老项目用同样的 #ifdef 注入改成 adios
   local ev="$COMMON/block/elevator.c"
@@ -502,7 +480,7 @@ inject_adios_default() {
   if ! awk '
     /^static struct elevator_type \*elevator_get_default\(struct request_queue \*q\)/ { in_func = 1 }
     in_func && !done && /^[[:space:]]*return elevator_find_get\(q, "mq-deadline"\);/ {
-      print "\t/* GKI-ADIOS-DEFAULT-BEGIN: off 模式会据此还原 */"
+      print "\t/* GKI-ADIOS-DEFAULT-BEGIN: 强制默认调度器为 adios */"
       print "#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS"
       print "\treturn elevator_find_get(q, \"adios\");"
       print "#else"
@@ -598,18 +576,18 @@ stage_adios() {
   verify_marker block/Kconfig.iosched 'config MQ_IOSCHED_DEFAULT_ADIOS' 'ADIOS 默认调度器 Kconfig'
   verify_marker block/Makefile 'adios.o' 'ADIOS 编译目标'
 
-  # off = 不强制默认、也不拦截: 完全不碰 block/elevator.c
-  # (adios 仍注册为一个可选调度器, 由用户态自行切换; 默认仍走内核自带的 mq-deadline)
-  if [ "$ADIOS_LOCK" = "off" ]; then
-    strip_adios_hooks
-    ok "ADIOS 集成完成 (仅调度器; 未强制默认, 未拦截切换; 模式=off)"
-    return 0
-  fi
-
+  # 默认调度器: 只要编了 ADIOS 就强制为 adios (与 --adios-lock 无关)
   inject_adios_default
+  verify_marker block/elevator.c 'GKI-ADIOS-DEFAULT-END' 'ADIOS 默认调度器注入'
+
+  # 运行时拦截只由 --adios-lock 决定; off 时 strip 掉上一次可能残留的拦截块
   inject_adios_lock "$ADIOS_LOCK"
-  verify_marker block/elevator.c 'GKI-ADIOS-LOCK-END' 'ADIOS 运行时切换拦截 (锁定)'
-  ok "ADIOS 集成完成 (默认调度器 + 锁定模式=$ADIOS_LOCK)"
+  if [ "$ADIOS_LOCK" = "off" ]; then
+    ok "ADIOS 集成完成 (默认调度器=adios; 未拦截切换; 模式=off)"
+  else
+    verify_marker block/elevator.c 'GKI-ADIOS-LOCK-END' 'ADIOS 运行时切换拦截 (锁定)'
+    ok "ADIOS 集成完成 (默认调度器=adios + 锁定模式=$ADIOS_LOCK)"
+  fi
 }
 
 # ============================================================================
@@ -667,12 +645,9 @@ stage_defconfig() {
     done
   fi
 
-  # ADIOS IO 调度器: 必须 =y 才能满足 MQ_IOSCHED_DEFAULT_ADIOS 的 depends on ...=y
-  # --adios-lock=off: 只保留调度器本身, 关闭 DEFAULT (不强制 adios 为默认调度器)
-  if [ "$ENABLE_ADIOS" = 1 ] && [ "$ADIOS_LOCK" = "off" ]; then
-    enable_config "$defconfig" 'CONFIG_MQ_IOSCHED_ADIOS=y'
-    disable_config "$defconfig" 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS'
-  elif [ "$ENABLE_ADIOS" = 1 ]; then
+  # ADIOS IO 调度器: 两项都 =y —— 不论 --adios-lock 取值, 内核默认调度器都是 adios
+  # (后者 depends on MQ_IOSCHED_ADIOS=y, 必须同时打开); 拦截与否只由 -LOCK- 注入决定
+  if [ "$ENABLE_ADIOS" = 1 ]; then
     enable_config "$defconfig" 'CONFIG_MQ_IOSCHED_ADIOS=y'
     enable_config "$defconfig" 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y'
   else
@@ -708,7 +683,7 @@ stage_defconfig() {
     fi
     echo "ADIOS=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
     echo "ADIOS_LOCK=$([ "$ENABLE_ADIOS" = 1 ] && echo "$ADIOS_LOCK" || echo n/a)"
-    echo "ADIOS_DEFAULT=$([ "$ENABLE_ADIOS" = 1 ] && { [ "$ADIOS_LOCK" = "off" ] && echo disabled || echo enabled; } || echo disabled)"
+    echo "ADIOS_DEFAULT=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
     echo "UNICODE_BYPASS=$([ "$ENABLE_UNICODE" = 1 ] && echo enabled || echo disabled)"
   } > "$GKI_ROOT/ci-build-info.env"
   ok "构建信息已写入: $GKI_ROOT/ci-build-info.env"
@@ -746,7 +721,7 @@ log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, 无条件生效; KSU 侧无开关/垫片)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
 [ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount  : third_party/nomount $NOMOUNT_VERSION -> fs/nomount/ (目录式内建, v22 add_key IPC)"
-[ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (调度器; 默认调度器=$([ "$ADIOS_LOCK" = off ] && echo 不强制 || echo 强制 adios), 锁定=$ADIOS_LOCK)"
+[ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (默认调度器=adios, 锁定=$ADIOS_LOCK)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过)"
 log "内核树改动: $(git -C "$COMMON" status --porcelain | wc -l) 个文件"
 log "========================================="
