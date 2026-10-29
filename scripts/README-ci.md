@@ -23,8 +23,7 @@
 
 | 输入 | 默认 | 说明 |
 | --- | --- | --- |
-| `ksu_repo` | `https://github.com/WGecy/BakaSU-Ultra` | KernelSU 仓库 |
-| `ksu_branch` | `main` | KernelSU 分支/标签 |
+| `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU-Ultra`） |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
 | `adios_lock` | `cpq` | ADIOS 调度器锁定：`cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios / `off`=不拦 |
 | `custom_suffix` | 空 | 追加到版本串末尾，如 `-test-01` → `6.6.158-android15-8-4k-test-01`；留空即项目默认 `6.6.158-android15-8-4k` |

@@ -15,11 +15,6 @@ env:
 on:
   workflow_dispatch:
     inputs:
-      ksu_repo:
-        description: "KernelSU 仓库 (默认 BakaSU-Ultra)"
-        required: false
-        type: string
-        default: "https://github.com/WGecy/BakaSU-Ultra"
       ksu_branch:
         description: "KSU 分支 (默认 main)"
         required: false
@@ -99,7 +94,6 @@ jobs:
       sub_level: ${{ matrix.sub_level }}
       snapshot: ${{ matrix.snapshot }}
       baseline_commit: ${{ matrix.baseline_commit }}
-      ksu_repo: ${{ inputs.ksu_repo }}
       ksu_branch: ${{ inputs.ksu_branch }}
       susfs_branch: ${{ inputs.susfs_branch }}
       adios_lock: ${{ inputs.adios_lock }}
