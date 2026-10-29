@@ -21,7 +21,7 @@ PCIEASPM_DEFAULT all off.
  1 file changed, 99 insertions(+), 49 deletions(-)
 
 diff --git a/arch/arm64/configs/gki_defconfig b/arch/arm64/configs/gki_defconfig
-index 86b9ef87fd9fc..99eebeb820481 100644
+index b663978d7f9a0..99eebeb820481 100644
 --- a/arch/arm64/configs/gki_defconfig
 +++ b/arch/arm64/configs/gki_defconfig
 @@ -24,7 +24,7 @@ CONFIG_RCU_LAZY=y

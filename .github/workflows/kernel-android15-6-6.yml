@@ -35,7 +35,7 @@ on:
           - "off"
         default: "cpq"
       custom_suffix:
-        description: "自定义内核后缀 (可选, 如 -test-01; 留空 = 项目默认 6.6.158)"
+        description: "自定义内核后缀 (可选, 如 -test-01; 留空 = 项目默认 -WGecy → 6.6.158-android15-8-WGecy-4k)"
         required: false
         type: string
         default: ""
@@ -162,7 +162,7 @@ jobs:
 
           : > /tmp/notes.txt
           printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: BakaSU-Ultra (KernelSU) + SUSFS + NoMount\n- BakaSU-Ultra 管理器 APK\n- 自定义后缀: %s\n' \
-            "${CUSTOM_SUFFIX:-无}" > /tmp/notes.txt
+            "${CUSTOM_SUFFIX:--WGecy} (留空时的默认值)" > /tmp/notes.txt
           # 追加各内核的 build-info (由 build.yml 生成)
           for f in dist/build-info*.txt; do
             [ -f "$f" ] || continue

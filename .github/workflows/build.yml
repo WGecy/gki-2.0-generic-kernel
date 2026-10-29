@@ -72,7 +72,7 @@ on:
         type: string
         default: "cpq"
       custom_suffix:
-        description: "自定义内核后缀 (留空 = 项目默认 6.6.x)"
+        description: "自定义内核后缀 (留空 = 项目默认 -WGecy; 例 -test-01 → 6.6.158-android15-8-test-01-4k)"
         required: false
         type: string
         default: ""
@@ -103,7 +103,7 @@ jobs:
           echo "KernelSU  : BakaSU-Ultra @ ${{ inputs.ksu_branch }}"
           echo "SUSFS     : ${{ inputs.susfs_branch }}"
           echo "NoMount   : 启用 (v2.2.0, 目录式内建 fs/nomount/)"
-          echo "自定义后缀: ${CUSTOM_SUFFIX:-(无)}"
+          echo "自定义后缀: ${CUSTOM_SUFFIX:--WGecy} (留空时的默认值)"
           echo "========================================"
 
       - name: 清理磁盘空间
@@ -300,9 +300,16 @@ jobs:
           test -f "$CLANG_AUTOFDO_PROFILE" || { echo "::error::AutoFDO profile 缺失: $CLANG_AUTOFDO_PROFILE"; exit 1; }
           JOBS="${JOBS:-$(nproc)}"
           echo "并行度: -j$JOBS (LTO 构建内存占用高; 内存紧张可用 JOBS 调低)"
-          # LOCALVERSION 为空串时 setlocalversion 不会再追加 -gHASH/+/-dirty, 版本串保持 6.6.<sub_level>
+          # 版本串由 scripts/setlocalversion 逐段拼接:
+          #   ${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}
+          # patch 0002 把 CONFIG_LOCALVERSION 设为 "-android15-8"(前段); -4k(页大小) 必须放进
+          # LOCALVERSION(后段), 自定义后缀再拼在 -4k 之前 —— 否则 -4k 会被钉在前段, 后缀只能
+          # 追加到它后面。留空时后缀取项目默认 -WGecy, 故缺省产物为
+          # 6.6.<sub_level>-android15-8-WGecy-4k, 传 -test-01 即 6.6.<sub_level>-android15-8-test-01-4k。
+          # LOCALVERSION 非空时 setlocalversion 也不会再追加 -gHASH/+/-dirty。
+          CUSTOM_SUFFIX="${CUSTOM_SUFFIX:--WGecy}"
           make O=out ARCH=arm64 LLVM=1 \
-            LOCALVERSION="$CUSTOM_SUFFIX" \
+            LOCALVERSION="${CUSTOM_SUFFIX}-4k" \
             KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
             -j"$JOBS" Image
 
@@ -317,12 +324,8 @@ jobs:
             echo "KERNEL_RELEASE_FILE=$PWD/out/include/config/kernel.release"
           } >> "$GITHUB_ENV"
 
-          # 版本串由 scripts/setlocalversion 逐段拼接:
-          #   ${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}
-          # patch 0002 把 CONFIG_LOCALVERSION 设为 "-android15-8-4k"; LOCALVERSION 在此传入自定义后缀
-          # (追加在末尾), 传空串时顺带抑制 setlocalversion 追加 +/-gHASH。
-          # 故缺省产物为 6.6.<sub_level>-android15-8-4k, 加后缀即 6.6.<sub_level>-android15-8-4k<suffix>
-          EXPECT="6.6.${{ inputs.sub_level }}-android15-8-4k${CUSTOM_SUFFIX}"
+          # 期望版本串与上面的拼装一致: 6.6.<sub_level>-android15-8<suffix>-4k
+          EXPECT="6.6.${{ inputs.sub_level }}-android15-8${CUSTOM_SUFFIX}-4k"
           if [ "$KREL" != "$EXPECT" ]; then
             echo "::error::内核版本串不符: 期望 $EXPECT, 实际 $KREL"
             exit 1
@@ -402,7 +405,7 @@ jobs:
             echo "KernelSU    : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
             echo "SUSFS       : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
             echo "NoMount     : $NOMOUNT ${NOMOUNT_VERSION:-(unknown)} (协议 v${NOMOUNT_PROTOCOL:-?}, nomount.c sha256: ${NOMOUNT_SHA256:0:12})"
-            echo "自定义后缀  : ${CUSTOM_SUFFIX:-(无)}"
+            echo "自定义后缀  : ${CUSTOM_SUFFIX:--WGecy} (留空时的默认值)"
             echo "构建时间    : $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "构建编号    : run ${{ github.run_id }} #${{ github.run_number }}"
           } > "$INFO"

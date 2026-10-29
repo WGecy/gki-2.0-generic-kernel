@@ -8,7 +8,7 @@
 - **补丁**：共 **84 个**（`patches/`）
   - **3 个通用补丁**
     1. `kernel/module/version.c` — vermagic / 符号 CRC 校验绕过（`same_magic()`、`check_version()` 恒返回 1）
-    2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION="-android15-8-4k"`，关闭 `LOCALVERSION_AUTO`
+    2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION="-android15-8"`，关闭 `LOCALVERSION_AUTO`
     3. `Makefile` — `SUBLEVEL = 158`
   - **1 个单片/LTO 配置补丁**：`0083-arm64-gki_defconfig-align-monolithic-image-with-Haru.patch`
   - **1 个 LTO 符号名补丁**：`0084-lto-keep-plain-symbol-names-for-statics-internalized.patch`
@@ -16,8 +16,9 @@
   - **79 条 stable 回补**：从上游 stable `v6.6.143..v6.6.157` 中挑选的修复
     （f2fs 16 · clk/qcom 15 · fuse 13 · GIC-v3-ITS 4 · erofs 3 · arm64 3 · selinux 2 · overlayfs 2 · 其余各 1）
 - **版本串**：形如 `6.6.<SUBLEVEL>-android15-8[-<可选后缀>]-4k`（`uname -r`）。`-android15-8`
-  对应 KMI（`BRANCH=android15-6.6` 的 `KMI_GENERATION=8`），`-4k` 是页大小；可选后缀默认为空，
-  即默认版本串为 `6.6.158-android15-8-4k`
+  对应 KMI（`BRANCH=android15-6.6` 的 `KMI_GENERATION=8`，来自 `CONFIG_LOCALVERSION`），`-4k` 是页大小
+  （来自 `LOCALVERSION`，永远在末尾）；可选后缀缺省为 `-WGecy`，即默认版本串
+  `6.6.158-android15-8-WGecy-4k`
 - **状态**：已在 GKI 2.0（android15-6.6）真机开机验证
 
 ## 通用补丁 1：vermagic / CRC 绕过做什么
@@ -51,9 +52,13 @@ make O=out ARCH=arm64 LLVM=1 \
      -j$(nproc) Image
 ```
 
-默认版本串取 `gki_defconfig` 的 `CONFIG_LOCALVERSION="-android15-8-4k"`；需要自定义后缀时，可在
-`gki_defconfig` 改 `CONFIG_LOCALVERSION`，或在上面两条 `make` 命令后追加 `LOCALVERSION=<后缀>`
-（例如 `LOCALVERSION=-android15-8-custom-4k`）覆盖。
+版本串由 `scripts/setlocalversion` 逐段拼接：`${KERNELVERSION}${file_localversion}` +
+  `CONFIG_LOCALVERSION`（前段，`-android15-8`）+ `LOCALVERSION`（后段）+ `scm_version`。
+`scripts/build.sh` 默认传 `LOCALVERSION=-WGecy-4k`，得到 `6.6.158-android15-8-WGecy-4k`；
+需要自定义后缀时用 `LOCALVERSION=<后缀>` 覆盖，`-4k` 由脚本自动追加
+（例如 `LOCALVERSION=-test-01` → `6.6.158-android15-8-test-01-4k`）。
+**不要把 `-4k` 写回 `CONFIG_LOCALVERSION`**：它在拼接序列里排在 `LOCALVERSION` 之前，
+会把后缀挤到 `-4k` 后面变成 `...-4k-<后缀>`。
 
 - AutoFDO profile 必须用**绝对路径**：`O=out` 下编译器 cwd 是 `out/`，相对路径会报
   `clang: error: no such file or directory`。profile 位于树内

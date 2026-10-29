@@ -81,7 +81,7 @@
 | ABI 并集、LTS 合并（`build.py step04.6`）、ACK tag 自动升级（`step04.5`） | 精确 commit 锁定基线（`data/android15/6.6.json`），无这些步骤 | ⛔ |
 | `setlocalversion` 去 `-dirty` | `LOCALVERSION=` + `LOCALVERSION_AUTO=n`（`patches/0002`）已保证版本串干净 | ✅ |
 | 构建时间戳（`init/Makefile` 注入） | `KBUILD_BUILD_TIMESTAMP`（`build_time` 输入） | ✅ |
-| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION`（**追加**在 `CONFIG_LOCALVERSION="-android15-8-4k"` 之后：`-test-01` → `6.6.158-android15-8-4k-test-01`；要换整段 KMI 串得改 `gki_defconfig`） | ✅ |
+| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION`（与 `-4k` 同段，拼在 `CONFIG_LOCALVERSION="-android15-8"` **之后**：`-test-01` → `6.6.158-android15-8-test-01-4k`，留空取默认 `-WGecy` → `6.6.158-android15-8-WGecy-4k`；要换整段 KMI 串得改 `gki_defconfig`） | ✅ |
 | `fastbuild.yml`（make + ccache-ECS 快速构建） | 未迁移（主流程走 Actions；工具链有 Actions 缓存） | ❌（可选） |
 | 两个基线 6.6.77 / 6.6.118 | 单基线 6.6.158 | 差异（非缺失） |
 

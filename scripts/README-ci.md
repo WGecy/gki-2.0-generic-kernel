@@ -26,7 +26,7 @@
 | `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU-Ultra`） |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
 | `adios_lock` | `cpq` | ADIOS 调度器锁定：`cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios / `off`=不拦 |
-| `custom_suffix` | 空 | 追加到版本串末尾，如 `-test-01` → `6.6.158-android15-8-4k-test-01`；留空即项目默认 `6.6.158-android15-8-4k` |
+| `custom_suffix` | 空 | 自定义内核后缀，插在 `-android15-8` 与 `-4k` 之间，如 `-test-01` → `6.6.158-android15-8-test-01-4k`；留空时取默认值 `-WGecy` → `6.6.158-android15-8-WGecy-4k` |
 | `build_time` | `N` | `N`/留空 = 当前 UTC，否则写入 `KBUILD_BUILD_TIMESTAMP` |
 
 产物（发布到 `kernel-latest` Release，同时作为 Actions artifact 上传）：
@@ -49,8 +49,9 @@
    （pahole/lz4/dtc，走 Actions 缓存）；硬校验 10 个工具齐全后写入
    `PATH`/`LD_LIBRARY_PATH`/`CLANG_AUTOFDO_PROFILE`（AutoFDO profile 必须绝对路径）。
 5. **集成**：`bash scripts/ci-integrate.sh --gki-root "$GKI_ROOT" --workspace "$GITHUB_WORKSPACE" ...`
-6. **配置 + 编译**：`make O=out ARCH=arm64 LLVM=1 LOCALVERSION=<suffix>
-   KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig` 然后 `... -j$(nproc) Image`
+6. **配置 + 编译**：`make O=out ARCH=arm64 LLVM=1 LOCALVERSION=
+   KCFLAGS=-D__ANDROID_COMMON_KERNEL__ gki_defconfig`（defconfig 阶段清空 LOCALVERSION）
+   然后 `make ... LOCALVERSION=<后缀>-4k -j$(nproc) Image`（`<后缀>` 缺省为 `-WGecy`）
    （单片内核 + LTO thin + AutoFDO，与 `scripts/build.sh` 一致）。
 7. **校验**：`kernel.release` / Image 版本串 / `vmlinux` 中 `kernelsu_init`、
    `susfs is initialized` 两项内建标记；NoMount v2.2.0 已无 v1 的 `nm_rules` kmem_cache 名，
@@ -175,7 +176,7 @@ cd "$GKI_ROOT/common"
 make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
      KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
      HOSTCFLAGS="-I$GKI_ROOT/hosttools/root/usr/include" gki_defconfig
-make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
+make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
      KCFLAGS=-D__ANDROID_COMMON_KERNEL__ \
      HOSTCFLAGS="-I$GKI_ROOT/hosttools/root/usr/include" \
      CLANG_AUTOFDO_PROFILE="$GKI_ROOT/common/android/gki/aarch64/afdo/kernel.afdo" \
