@@ -26,14 +26,14 @@ on:
         type: string
         default: "gki-android15-6.6"
       adios_lock:
-        description: "ADIOS 调度器锁定 (cpq=只拦 cpq / all=只允许 adios / off=不拦)"
+        description: "ADIOS 调度器锁定 (off=不拦截也不强制 / cpq=只拦 cpq / all=只允许 adios)"
         required: true
         type: choice
         options:
+          - "off"
           - "cpq"
           - "all"
-          - "off"
-        default: "cpq"
+        default: "off"
       custom_suffix:
         description: "自定义内核后缀 (可选, 如 -test-01; 留空 = 项目默认 -WGecy → 6.6.158-android15-8-WGecy-4k)"
         required: false

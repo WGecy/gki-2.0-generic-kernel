@@ -114,8 +114,9 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
   上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
   50_add_susfs 补丁 + 源码）→ NoMount v2.2.0（目录式内建 `fs/nomount/`，dentry/inode ops
-  劫持 + `add_key` 单页 payload IPC；v2 起不再需要 VFS hook 补丁）→ ADIOS（调度器补丁 +
-  `elevator_get_default()` 强制 adios + `elevator_change()` 拦截 `cpq`）→ Unicode 绕过
+  劫持 + `add_key` 单页 payload IPC；v2 起不再需要 VFS hook 补丁）→ ADIOS（调度器补丁；
+  默认 `adios_lock=off` 不碰 `elevator.c`，仅 `cpq`/`all` 时才注入
+  `elevator_get_default()` 强制 adios + `elevator_change()` 拦截）→ Unicode 绕过
   （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
 - **fusebpf v3**：`third_party/fusebpf/fusebpf-lookup-revalidate.patch` 是上游式
   `fuse_lookup_revalidate_{initialize,backing,finalize}` 实现（`fs/fuse/{backing.c,dir.c,fuse_i.h}`
@@ -124,9 +125,12 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   ReSukiSU-Ultra 侧（BakaSU-Ultra 沿用）已同步删除 `CONFIG_KSU_FUSEBPF_FIX`、`CMD_FUSEBPF_SET`、`ksud fusebpf`
   子命令与 `kernel-patches/fusebpf/`，因此内核侧不再需要任何兼容垫片；若换回仍引用旧符号的
   KSU，`ci-integrate.sh` 会立即报错（否则内建 KSU 会在链接 vmlinux 时报 undefined symbol）。
-- **ADIOS 锁定**：澎湃OS4（Android 17）的 `init.qti.kernel.rc` 会在每次开机把 userdata
-  调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
-  `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。
+- **ADIOS 锁定**（默认 `off`）：澎湃OS4（Android 17）的 `init.qti.kernel.rc` 会在每次开机把
+  userdata 调度器写成 `cpq`。`off`（默认）**不拦截也不强制**：不注入 `elevator_get_default()`、
+  不打开 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS`，`block/elevator.c` 保持上游原样（adios 仍编进内核，
+  可手动 `echo adios > /sys/block/sda/queue/scheduler`）；`cpq` = 强制 adios 为默认并在
+  `elevator_change()` 拒绝切到 `cpq`；`all` = 强制 adios 且拒绝任何非 adios 切换。
+  工作流输入 `adios_lock`（`off`/`cpq`/`all`），`--no-adios` 则连调度器都不编。
 - **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
   `kernelsu_init`、`susfs is initialized` —— 防止“补丁打上了但没编译进去”。
   NoMount v2.2.0 已无 v1 的 `nm_rules` slab 名，改为三条判据**任一命中即通过**：
