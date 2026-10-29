@@ -1,8 +1,9 @@
 name: GetManager
 
-# 从 ReSukiSU-Ultra 仓库拉取管理器 APK (公开 release, 匿名可下载)
+# 从 BakaSU-Ultra 仓库拉取管理器 APK (公开 release, 匿名可下载)
 # 迁移自老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/get-manager.yml
-# 注意: 需要 ReSukiSU-Ultra 仓库先打 tag (v*) 触发 release 发布
+# 注意: BakaSU-Ultra 的 release 全是 prerelease (tag 形如 ci-4525),
+#       因此必须用 /releases?per_page=1 排序取最新, 不能用 /releases/latest
 
 permissions:
   contents: write
@@ -22,25 +23,47 @@ jobs:
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
           sudo apt-get install -y curl jq
 
-      - name: 下载管理器 APK (ReSukiSU-Ultra 最新 release)
+      - name: 下载管理器 APK (BakaSU-Ultra 最新 release)
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p manager
-          # 一个版本一个 tag: 用 API 拿最新 release 的 tag (按创建时间, 含 prerelease)
-          LATEST_TAG=$(curl -s "https://api.github.com/repos/pengzenzen-creator/ReSukiSU-Ultra/releases?per_page=1" | jq -r '.[0].tag_name')
+          # 一个版本一个 tag: 用 API 拿最新 release (按创建时间排序, 含 prerelease ——
+          # BakaSU-Ultra 的 release 都是 prerelease, /releases/latest 会取不到)
+          # 带 token 是为了躲开匿名 60 次/小时的 API 限流 (会被 job 缓存盘清空后放大)
+          REL_JSON=$(curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/WGecy/BakaSU-Ultra/releases?per_page=1")
+          LATEST_TAG=$(printf '%s' "$REL_JSON" | jq -r '.[0].tag_name // empty')
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-            echo "::warning::无法获取最新 release, 跳过"
+            echo "::warning::无法获取最新 release, 跳过 (API 返回: $(printf '%s' "$REL_JSON" | head -c 200))"
             exit 0
           fi
           echo "最新管理器版本: $LATEST_TAG"
-          curl -sL "https://github.com/pengzenzen-creator/ReSukiSU-Ultra/releases/download/${LATEST_TAG}/ReSukiSU-Ultra-universal.apk" -o manager/ReSukiSU-Ultra-universal.apk
+          # 资产名可能随版本变化: 优先精确匹配 BakaSU-Ultra-universal.apk, 再退到 *-universal-release.apk, 最后任意 apk
+          # (用 endswith 而不是 test 正则, 避免反斜杠在 YAML/shell/jq 三层里被吞)
+          ASSET_URL=$(printf '%s' "$REL_JSON" | jq -r '
+            [ .[0].assets[].browser_download_url ]
+            | (map(select(endswith("/BakaSU-Ultra-universal.apk")))
+               + map(select(endswith("-universal-release.apk")))
+               + map(select(endswith(".apk"))))
+            | .[0] // empty')
+          if [ -z "$ASSET_URL" ]; then
+            echo "::warning::release ${LATEST_TAG} 里没有 apk 资产, 跳过"
+            exit 0
+          fi
+          echo "下载: $ASSET_URL"
+          ASSET_NAME=$(basename "$ASSET_URL")
+          curl -sSL "$ASSET_URL" -o "manager/${ASSET_NAME}"
           ls -la manager/
           # 校验是否真的下载到 (404 页面会是一个小文件)
-          SIZE=$(stat -c %s manager/ReSukiSU-Ultra-universal.apk)
+          SIZE=$(stat -c %s "manager/${ASSET_NAME}")
           if [ "$SIZE" -lt 1000000 ]; then
             echo "::warning::管理器 APK 下载失败 (可能无 release), 跳过"
-            rm -f manager/ReSukiSU-Ultra-universal.apk
+            rm -f "manager/${ASSET_NAME}"
+            exit 0
           fi
+          echo "管理器 APK: ${ASSET_NAME} (${SIZE} 字节)"
 
       - name: 上传管理器 APK
         uses: actions/upload-artifact@v7

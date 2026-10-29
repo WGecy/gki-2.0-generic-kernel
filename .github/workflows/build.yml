@@ -5,11 +5,11 @@
 #   2. 拉取 ACK 基线源码 (精确 commit)
 #   3. git am patches/ (基线补丁)
 #   4. 准备工具链 (clang 19 + lld 19 发行版包 + AOSP build-tools)
-#   5. 集成 ReSukiSU-Ultra + SUSFS + NoMount (scripts/ci-integrate.sh)
+#   5. 集成 BakaSU-Ultra + SUSFS + NoMount (scripts/ci-integrate.sh)
 #   6. defconfig + 编译 Image (plain make, LTO + AutoFDO, 单片内核)
 #   7. AnyKernel3 打包 + 产物上传
 # ========================================
-name: 内核构建流程 (GKI 2.0 ReSukiSU-Ultra + SUSFS + NoMount)
+name: 内核构建流程 (GKI 2.0 BakaSU-Ultra + SUSFS + NoMount)
 
 permissions:
   contents: write
@@ -52,10 +52,10 @@ on:
         required: true
         type: string
       ksu_repo:
-        description: "KernelSU (ReSukiSU-Ultra) 仓库"
+        description: "KernelSU (BakaSU-Ultra) 仓库"
         required: false
         type: string
-        default: "https://github.com/WGecy/ReSukiSU-Ultra"
+        default: "https://github.com/WGecy/BakaSU-Ultra"
       ksu_branch:
         description: "KernelSU 分支/标签"
         required: false
@@ -84,7 +84,7 @@ on:
 
 jobs:
   build-kernel:
-    name: "6.6.${{ inputs.sub_level }}-${{ inputs.snapshot }}-ReSukiSU-Ultra"
+    name: "6.6.${{ inputs.sub_level }}-${{ inputs.snapshot }}-BakaSU-Ultra"
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -100,7 +100,7 @@ jobs:
           echo "ACK 基线  : ${{ inputs.baseline_commit }} (快照 ${{ inputs.snapshot }})"
           echo "内核形态  : 单片 (monolithic) + LTO thin + AutoFDO"
           echo "工具链    : clang 19 + lld 19 ($LLVM_BIN)"
-          echo "KernelSU  : ReSukiSU-Ultra @ ${{ inputs.ksu_branch }}"
+          echo "KernelSU  : BakaSU-Ultra @ ${{ inputs.ksu_branch }}"
           echo "SUSFS     : ${{ inputs.susfs_branch }}"
           echo "NoMount   : 启用 (v2.2.0, 目录式内建 fs/nomount/)"
           echo "自定义后缀: ${CUSTOM_SUFFIX:-(无)}"
@@ -225,8 +225,8 @@ jobs:
           ld.lld --version | head -1
           pahole --version
 
-      # ==================== 集成 ReSukiSU-Ultra + SUSFS + NoMount ====================
-      - name: 集成 ReSukiSU-Ultra + SUSFS + NoMount
+      # ==================== 集成 BakaSU-Ultra + SUSFS + NoMount ====================
+      - name: 集成 BakaSU-Ultra + SUSFS + NoMount
         env:
           ANDROID_VERSION: ${{ inputs.android_version }}
           KERNEL_VERSION: ${{ inputs.kernel_version }}

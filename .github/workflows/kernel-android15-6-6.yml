@@ -2,7 +2,7 @@ name: GKI 2.0 内核构建 - Android 15 (6.6)
 
 # 结构完全参照老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/kernel-android15-6-6.yml
 #   读取 data/android15/6.6.json 版本矩阵 → 逐个版本调用 build.yml →
-#   拉取 ReSukiSU-Ultra 管理器 APK → 合并发布到一个 Release
+#   拉取 BakaSU-Ultra 管理器 APK → 合并发布到一个 Release
 # 本内核版本形态为 "ACK 基线 + patches/ 全部补丁", 因此每个矩阵项都带 baseline_commit
 
 permissions:
@@ -15,19 +15,11 @@ env:
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "内核版本 (6.6.158 / 全部)"
-        required: true
-        type: choice
-        options:
-          - "all"
-          - "6.6.158"
-        default: "all"
       ksu_repo:
-        description: "KernelSU 仓库 (默认 ReSukiSU-Ultra)"
+        description: "KernelSU 仓库 (默认 BakaSU-Ultra)"
         required: false
         type: string
-        default: "https://github.com/WGecy/ReSukiSU-Ultra"
+        default: "https://github.com/WGecy/BakaSU-Ultra"
       ksu_branch:
         description: "KSU 分支 (默认 main)"
         required: false
@@ -72,7 +64,7 @@ jobs:
         id: set-matrix
         run: |
           set -e
-          VERSION_FILTER="${{ inputs.version }}"
+          # 矩阵即 data/android15/6.6.json 的全部条目 (已无版本过滤输入)
           MATRIX_JSON=$(jq -c '
             [ .entries[] | {
                 android_version: .android_version,
@@ -83,14 +75,8 @@ jobs:
               } ]
           ' ./data/android15/6.6.json)
 
-          # 按输入过滤版本 (6.6.158 → 158)
-          if [ "$VERSION_FILTER" != "all" ]; then
-            FILTER_SUB=$(echo "$VERSION_FILTER" | awk -F. '{print $3}')
-            MATRIX_JSON=$(echo "$MATRIX_JSON" | jq -c --arg sub "$FILTER_SUB" '[ .[] | select(.sub_level == $sub) ]')
-          fi
-
           if [ "$MATRIX_JSON" = "[]" ]; then
-            echo "::error::版本过滤没有匹配项: $VERSION_FILTER"
+            echo "::error::data/android15/6.6.json 的 entries 为空, 无可构建版本"
             exit 1
           fi
 
@@ -170,7 +156,6 @@ jobs:
       - name: 发布合并 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION_INPUT: ${{ inputs.version }}
           CUSTOM_SUFFIX: ${{ inputs.custom_suffix }}
         run: |
           set -e
@@ -179,11 +164,11 @@ jobs:
             | xargs -r -n1 basename \
             | sed -nE 's/^android15-([0-9]+\.[0-9]+\.[0-9]+)-.*$/\1/p' \
             | sort -u | paste -sd, - || true)
-          REL_TITLE="GKI 2.0 通用内核 (${VERSIONS:-6.6.158} + ReSukiSU-Ultra + SUSFS + NoMount + 管理器)"
+          REL_TITLE="GKI 2.0 通用内核 (${VERSIONS:-6.6.158} + BakaSU-Ultra + SUSFS + NoMount + 管理器)"
 
           : > /tmp/notes.txt
-          printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: ReSukiSU-Ultra (KernelSU) + SUSFS + NoMount\n- ReSukiSU-Ultra 管理器 APK\n- 版本过滤: %s\n- 自定义后缀: %s\n' \
-            "$VERSION_INPUT" "${CUSTOM_SUFFIX:-无}" > /tmp/notes.txt
+          printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: BakaSU-Ultra (KernelSU) + SUSFS + NoMount\n- BakaSU-Ultra 管理器 APK\n- 自定义后缀: %s\n' \
+            "${CUSTOM_SUFFIX:-无}" > /tmp/notes.txt
           # 追加各内核的 build-info (由 build.yml 生成)
           for f in dist/build-info*.txt; do
             [ -f "$f" ] || continue

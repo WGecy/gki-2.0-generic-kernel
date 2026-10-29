@@ -1,6 +1,6 @@
-# GitHub Actions 构建说明（ReSukiSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
+# GitHub Actions 构建说明（BakaSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
 
-本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **ReSukiSU-Ultra（KernelSU）
+本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **BakaSU-Ultra（KernelSU）
 + SUSFS + NoMount + ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核
 （GKI 2.0 / android15-6.6，基线 `6.6.158`）上。
 工作流结构迁移自老内核项目 `ReSukiSU-Ultra-Kernel`：
@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | `kernel-android15-6-6.yml` | `.github/workflows/kernel-android15-6-6.yml` | 入口：读版本矩阵 → 调构建 → 拉管理器 APK → 合并发布 |
 | `build.yml` | `.github/workflows/build.yml` | 可复用构建流程（拉源码/补丁/集成/编译/打包） |
-| `get-manager.yml` | `.github/workflows/get-manager.yml` | 拉取 ReSukiSU-Ultra 管理器 APK |
+| `get-manager.yml` | `.github/workflows/get-manager.yml` | 拉取 BakaSU-Ultra 管理器 APK |
 | — | `data/android15/6.6.json` | 版本矩阵（含 ACK 基线 commit） |
 | `patches.py` + `build.py` 的集成步骤 | `scripts/ci-integrate.sh` | KSU/fusebpf/SUSFS/NoMount/ADIOS/Unicode 集成（可在本地直接跑） |
 | `third_party/AnyKernel3`、`nomount`、`fusebpf`、`adios`、`unicode_bypass` | 同路径 | 打包模板与各功能补丁资产 |
@@ -23,8 +23,7 @@
 
 | 输入 | 默认 | 说明 |
 | --- | --- | --- |
-| `version` | `all` | 版本过滤，选项 `all` / `6.6.158`（对应 `data/android15/6.6.json` 的 `sub_level`） |
-| `ksu_repo` | `https://github.com/WGecy/ReSukiSU-Ultra` | KernelSU 仓库 |
+| `ksu_repo` | `https://github.com/WGecy/BakaSU-Ultra` | KernelSU 仓库 |
 | `ksu_branch` | `main` | KernelSU 分支/标签 |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
 | `adios_lock` | `cpq` | ADIOS 调度器锁定：`cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios / `off`=不拦 |
@@ -36,7 +35,7 @@
 - `android15-6.6.158-2026-09-AnyKernel3.zip`（AnyKernel3 刷机包）
 - `Image-6.6.158`（裸 Image，配合 `scripts/pack-boot.sh` 可自行重打包 boot.img）
 - `build-info.txt`（基线 commit / KSU 与 SUSFS commit / NoMount sha256 / 构建编号）
-- `ReSukiSU-Ultra-universal.apk`（管理器，来自 get-manager 任务）
+- `BakaSU-Ultra-universal.apk`（管理器，来自 get-manager 任务）
 
 ## 构建流程（build.yml）
 
@@ -68,7 +67,7 @@
 
 在 `$GKI_ROOT/common`（已 `git am` 补丁的内核树）上按顺序执行：
 
-1. **KernelSU（ReSukiSU-Ultra）**
+1. **KernelSU（BakaSU-Ultra）**
    - `git clone --depth 1 -b <branch> <repo> $GKI_ROOT/KernelSU`
    - `common/drivers/kernelsu` → `KernelSU/kernel` 软链接（已验证该仓库存在 `kernel/Kbuild`，
      kbuild 优先读它，因此可以按 `CONFIG_KSU=y` 内建，而不是 LKM 用的 `kernel/Makefile`）
@@ -83,7 +82,7 @@
      （`tools/testing/selftests/filesystems/fuse/`）
    - `fusebpf-no-eexist.patch`：mknod/mkdir/link/symlink 四条 backing 路径把 `-EEXIST`
      归一化成 `-ENOENT`（v3 起不再用运行时开关判断）
-   - **KSU 侧已同步删除整套开关**（ReSukiSU-Ultra 2026-10-02）：`CONFIG_KSU_FUSEBPF_FIX`、
+   - **KSU 侧已同步删除整套开关**（ReSukiSU-Ultra 2026-10-02 起，BakaSU-Ultra 沿用）：`CONFIG_KSU_FUSEBPF_FIX`、
      `fusebpf_fix` sysfs 参数、`CMD_FUSEBPF_SET` 超调用、ksud 的 `fusebpf enable/disable`
      子命令、`FeatureId::Fusebpf` 与管理器里的 `settings_fusebpf_fix` 字符串都不再存在
      （feature id 6 仅在 `uapi/feature.h` 保留占位，避免编号漂移）
@@ -153,7 +152,7 @@
 
 - `CONFIG_KALLSYMS_ALL=y`（基线 gki_defconfig 已开）——KernelSU 需要 `write_op`、
   `sel_handle_status_ops`、`security_dump_masked_av` 等符号可见；
-- KernelSU 钩子方式走 ReSukiSU Kconfig choice 的默认值 `KSU_TRACEPOINT_HOOK`
+- KernelSU 钩子方式走 BakaSU Kconfig choice 的默认值 `KSU_TRACEPOINT_HOOK`
   （GKI2 的 syscall tracepoint 方案），SUSFS 那批 `CONFIG_KSU_SUSFS` 钩子由
   `CONFIG_KSU_SUSFS=y` 打开。
 
@@ -168,7 +167,7 @@ git clone https://android.googlesource.com/kernel/common "$GKI_ROOT/common"
 git -C "$GKI_ROOT/common" checkout 448c303366032107c46d39006c8127a5ca967a26
 git -C "$GKI_ROOT/common" am "$PWD"/patches/*.patch
 
-# 2) 集成 ReSukiSU-Ultra + SUSFS + NoMount
+# 2) 集成 BakaSU-Ultra + SUSFS + NoMount
 bash scripts/ci-integrate.sh --gki-root "$GKI_ROOT" --workspace "$PWD"
 
 # 3) 编译 (与 scripts/build.sh 相同的工具链/参数)
@@ -209,7 +208,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
   其 hunk 上下文与 ACK 版本相关。脚本已用 `-F3` + 落点校验兜住小幅漂移；若上游大改，
   会以“hunk FAILED / 缺少 hook”的形式失败，需要人工跟进。
 - **KSU 与 fusebpf 必须配套（已从"靠垫片兜住"改为"提前失败"）**：内核侧是 v3（修复无条件生效，
-  无 `fuse_bpf_lookup_revalidate_{enabled,set}`），KSU 侧（ReSukiSU-Ultra 2026-10-02 起）也已删掉
+  无 `fuse_bpf_lookup_revalidate_{enabled,set}`），KSU 侧（ReSukiSU-Ultra 2026-10-02 起，BakaSU-Ultra 沿用）也已删掉
   这两个 extern 与整套运行时开关、`kernel-patches/fusebpf/`。`stage_fusebpf()` 会扫 clone 到的
   KSU 源码：仍引用旧符号时**在应用补丁前**就报错并提示换分支，因此不会再出现"编译 30 分钟后
   链接失败"。若将来 KSU 又引入新的符号依赖，同步改 `third_party/fusebpf/` 与该检查即可。
@@ -217,7 +216,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION= \
   （`tools/testing/selftests/filesystems/fuse/`）。换基线后如果 selftest 变化较大，
   `git apply` 会失败并退回 `patch -p1 -F3`，请在日志里确认没出现 `FAILED`/`.rej`；
   确实只差 selftest 时，可从补丁里剔除这两个文件（内核功能不受影响）。
-- **ReSukiSU-Ultra Kconfig 变动**：新增/删除 `CONFIG_KSU_SUSFS_*` 时，`make gki_defconfig`
+- **BakaSU-Ultra Kconfig 变动**：新增/删除 `CONFIG_KSU_SUSFS_*` 时，`make gki_defconfig`
   会静默丢弃未声明的项；工作流的 defconfig 步骤会硬校验关键项，CI 会立刻暴露。
 - **LTO 构建内存**：GitHub runner 约 4 vCPU / 16 GB，工作流用 `-j$(nproc)`；如遇 OOM，
   可把任务里的 `JOBS` 环境变量调小（`-j4` → `-j2`）。
