@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  GKI 2.0 内核集成脚本 —— BakaSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过
+#  GKI 2.0 内核集成脚本 —— BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过
 # ----------------------------------------------------------------------------
 #  在 "$GKI_ROOT/common" (ACK 基线 + patches/*.patch 已 git am 到位的内核树) 之上:
-#    1. 集成 BakaSU-Ultra (KernelSU): drivers/kernelsu 符号链接 + Makefile/Kconfig
+#    1. 集成 BakaSU (KernelSU): drivers/kernelsu 符号链接 + Makefile/Kconfig
 #    2. 应用 fusebpf 内核侧补丁 (v3 上游式 lookup revalidate + EEXIST 归一化,
 #       third_party/fusebpf; 修复无条件生效, KSU 侧已无运行时开关)
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
@@ -21,7 +21,7 @@
 #  选项:
 #    --gki-root DIR        GKI_ROOT (内含 common/), 默认 $GKI_ROOT 或 $HOME/gki-kernel
 #    --workspace DIR       本仓库根目录 (含 third_party/), 默认脚本所在目录的上一级
-#    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/BakaSU-Ultra
+#    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/BakaSU
 #    --ksu-branch BR       KernelSU 分支/标签, 默认 main
 #    --susfs-repo URL      SUSFS 仓库, 默认 https://gitlab.com/simonpunk/susfs4ksu.git
 #    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6
@@ -51,7 +51,7 @@ GKI_ROOT="${GKI_ROOT:-$HOME/gki-kernel}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-KSU_REPO="https://github.com/WGecy/BakaSU-Ultra"
+KSU_REPO="https://github.com/WGecy/BakaSU"
 KSU_BRANCH="main"
 SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
 SUSFS_BRANCH="gki-android15-6.6"
@@ -218,10 +218,10 @@ apply_patch_file() {  # apply_patch_file FILE DESC  (返回非 0 表示有 hunk 
 }
 
 # ============================================================================
-#  1. BakaSU-Ultra (KernelSU) 集成
+#  1. BakaSU (KernelSU) 集成
 # ============================================================================
 stage_ksu() {
-  log "=========== [1/7] 集成 BakaSU-Ultra (KernelSU) ==========="
+  log "=========== [1/7] 集成 BakaSU (KernelSU) ==========="
   local ksu_dir="$GKI_ROOT/KernelSU"
   local drivers="$COMMON/drivers"
 
@@ -261,7 +261,7 @@ stage_ksu() {
 #  2. fusebpf 内核侧补丁 (third_party/fusebpf, v3 上游式实现)
 # ============================================================================
 check_ksu_fusebpf_symbols() {
-  # v3 之后内核侧不再提供 fuse_bpf_lookup_revalidate_{enabled,set}。BakaSU-Ultra 侧
+  # v3 之后内核侧不再提供 fuse_bpf_lookup_revalidate_{enabled,set}。BakaSU 侧
   # 也已同步删掉这两个 extern 与整套运行时开关 (KSU_FUSEBPF_FIX / CMD_FUSEBPF_SET /
   # ksud 的 fusebpf 子命令)。若 clone 到的 KSU 仍引用它们, 内建 KSU 会在链接 vmlinux
   # 时报 undefined symbol (历史教训: run 35693420939) —— 这里提前失败, 不等到链接阶段。
@@ -623,7 +623,9 @@ stage_defconfig() {
   # KernelSU: 内建 (y) — 钩子方式由 BakaSU Kconfig 的 choice 默认值决定
   # (GKI2 走 tracepoint syscall redirect, 无需手工 hook 源码补丁)
   enable_config "$defconfig" 'CONFIG_KSU=y'
-  enable_config "$defconfig" 'CONFIG_KSU_NETISOLATE=y'
+  # 注意: 不写 CONFIG_KSU_NETISOLATE —— BakaSU (WGecy/BakaSU) 的 kernel/ 里没有
+  # netisolate 子模块 (那是 BakaSU-Ultra 独有的), Kconfig 里也没有该符号; 写进去只会被
+  # make gki_defconfig 静默丢弃, 反而让人误以为联网隔离已编进内核。
   enable_config "$defconfig" 'CONFIG_NOMOUNT=y'
 
   # fusebpf: KSU 侧已无 KSU_FUSEBPF_FIX 配置项/运行时开关 (v3 内核侧补丁无条件生效),
@@ -725,4 +727,4 @@ log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过)"
 log "内核树改动: $(git -C "$COMMON" status --porcelain | wc -l) 个文件"
 log "========================================="
-ok "BakaSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过 集成完成"
+ok "BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过 集成完成"

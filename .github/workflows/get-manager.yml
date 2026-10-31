@@ -1,15 +1,31 @@
 name: GetManager
 
-# 从 BakaSU-Ultra 仓库拉取管理器 APK (公开 release, 匿名可下载)
+# 从 WGecy/BakaSU 仓库拉取管理器 APK
 # 迁移自老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/get-manager.yml
-# 注意: BakaSU-Ultra 的 release 全是 prerelease (tag 形如 ci-4525),
-#       因此必须用 /releases?per_page=1 排序取最新, 不能用 /releases/latest
+#
+# 取 APK 的两级降级链:
+#   1) 优先走 GitHub Release (仓库一旦发版就走这条, 公开资产匿名可下载)
+#   2) 仓库还没有 Release 时 (当前 WGecy/BakaSU releases 为空), 退到
+#      Actions 上最近一次成功的 Build Manager 运行, 下载它产出的
+#      "Manager-release" 制品 (repack-manager job 重签名后的成品), 解压取 apk
+# 两条路都拿不到就以 warning 跳过, 不阻塞内核构建。
+#
+# 关于 token: 制品属于 WGecy/BakaSU 仓库, 本仓库的 GITHUB_TOKEN 只对本仓库有效,
+# 跨仓库读 Actions 制品必须有能访问 BakaSU 的 token。因此优先用 secrets.KSU_REPO_TOKEN
+# (PAT, 需 actions:read; 经典 PAT 给 repo 即可), 没有才退回 GITHUB_TOKEN (大概率 403,
+# 此时只会在日志里 warning, 继续走后续构建)。
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 on:
   workflow_call:
+
+env:
+  KSU_REPO: WGecy/BakaSU
+  # repack-manager job 上传的制品名, 形如 Manager-release / Spoofed-Manager-release
+  MANAGER_ARTIFACT: Manager-release
 
 jobs:
   get_ksu_manager:
@@ -21,49 +37,95 @@ jobs:
           sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
             /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo apt-get install -y curl jq
+          sudo apt-get install -y curl jq unzip
 
-      - name: 下载管理器 APK (BakaSU-Ultra 最新 release)
+      - name: 下载管理器 APK
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.KSU_REPO_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          set -u
           mkdir -p manager
-          # 一个版本一个 tag: 用 API 拿最新 release (按创建时间排序, 含 prerelease ——
-          # BakaSU-Ultra 的 release 都是 prerelease, /releases/latest 会取不到)
-          # 带 token 是为了躲开匿名 60 次/小时的 API 限流 (会被 job 缓存盘清空后放大)
-          REL_JSON=$(curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
-            "https://api.github.com/repos/WGecy/BakaSU-Ultra/releases?per_page=1")
+          API="https://api.github.com/repos/${KSU_REPO}"
+          AUTH="Authorization: Bearer ${GH_TOKEN}"
+
+          # ---------- 路线 1: GitHub Release ----------
+          # 用 /releases?per_page=1 排序取最新 (含 prerelease), 不用 /releases/latest
+          REL_JSON=$(curl -sSL -H "$AUTH" "${API}/releases?per_page=1")
           LATEST_TAG=$(printf '%s' "$REL_JSON" | jq -r '.[0].tag_name // empty')
-          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-            echo "::warning::无法获取最新 release, 跳过 (API 返回: $(printf '%s' "$REL_JSON" | head -c 200))"
-            exit 0
+          if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "null" ]; then
+            echo "最新 release: $LATEST_TAG"
+            # 资产名可能随版本变化: 优先精确匹配 BakaSU-universal.apk,
+            # 再退到 *-universal-release.apk, 最后任意 apk
+            # (用 endswith 而不是 test 正则, 避免反斜杠在 YAML/shell/jq 三层里被吞)
+            ASSET_URL=$(printf '%s' "$REL_JSON" | jq -r '
+              [ .[0].assets[].browser_download_url ]
+              | (map(select(endswith("/BakaSU-universal.apk")))
+                 + map(select(endswith("-universal-release.apk")))
+                 + map(select(endswith(".apk"))))
+              | .[0] // empty')
+            if [ -n "$ASSET_URL" ]; then
+              ASSET_NAME=$(basename "$ASSET_URL")
+              curl -sSL "$ASSET_URL" -o "manager/${ASSET_NAME}"
+            else
+              echo "::warning::release ${LATEST_TAG} 里没有 apk 资产, 转用 Actions 制品"
+            fi
+          else
+            echo "::warning::${KSU_REPO} 暂无 release, 转用 Actions 制品"
           fi
-          echo "最新管理器版本: $LATEST_TAG"
-          # 资产名可能随版本变化: 优先精确匹配 BakaSU-Ultra-universal.apk, 再退到 *-universal-release.apk, 最后任意 apk
-          # (用 endswith 而不是 test 正则, 避免反斜杠在 YAML/shell/jq 三层里被吞)
-          ASSET_URL=$(printf '%s' "$REL_JSON" | jq -r '
-            [ .[0].assets[].browser_download_url ]
-            | (map(select(endswith("/BakaSU-Ultra-universal.apk")))
-               + map(select(endswith("-universal-release.apk")))
-               + map(select(endswith(".apk"))))
-            | .[0] // empty')
-          if [ -z "$ASSET_URL" ]; then
-            echo "::warning::release ${LATEST_TAG} 里没有 apk 资产, 跳过"
-            exit 0
+
+          # ---------- 路线 2: Actions 制品降级 ----------
+          if [ -z "$(ls -A manager 2>/dev/null)" ]; then
+            # 最近若干次成功的 Build Manager 运行, 逐个查制品 (制品有 90 天保留期, 挑到第一个未过期的)
+            RUNS=$(curl -sSL -H "$AUTH" \
+              "${API}/actions/workflows/build-manager.yml/runs?status=success&per_page=10")
+            ART_ID=""
+            for RID in $(printf '%s' "$RUNS" | jq -r '.workflow_runs[]?.id // empty'); do
+              ARTS=$(curl -sSL -H "$AUTH" "${API}/actions/runs/${RID}/artifacts?per_page=100")
+              ART_ID=$(printf '%s' "$ARTS" | jq -r --arg n "$MANAGER_ARTIFACT" '
+                [ .artifacts[]? | select(.name == $n and .expired == false) ] | .[0].id // empty')
+              if [ -n "$ART_ID" ]; then
+                echo "使用运行 ${RID} 的制品 ${MANAGER_ARTIFACT} (id=${ART_ID})"
+                break
+              fi
+            done
+            if [ -z "$ART_ID" ]; then
+              echo "::warning::${KSU_REPO} 既无 release 也无可用 Manager 制品, 跳过"
+              exit 0
+            fi
+            # 制品下载接口会 302 到对象存储, 必须 -L
+            curl -sSL -H "$AUTH" "${API}/actions/artifacts/${ART_ID}/zip" -o artifact.zip
+            unzip -o -q artifact.zip -d artifact
+            rm -f artifact.zip
+            # 制品里是多个 abi 的 apk, 优先取 universal 并统一改名成 *-universal-release.apk 便于下游匹配
+            UNI=$(find artifact -type f -name "*.apk" | grep -E 'universal' | head -n 1)
+            if [ -z "$UNI" ]; then
+              UNI=$(find artifact -type f -name "*-release.apk" | head -n 1)
+            fi
+            if [ -z "$UNI" ]; then
+              UNI=$(find artifact -type f -name "*.apk" | head -n 1)
+            fi
+            if [ -z "$UNI" ]; then
+              echo "::warning::制品 ${MANAGER_ARTIFACT} 里没有 apk, 跳过"
+              exit 0
+            fi
+            cp -f "$UNI" "manager/$(basename "$UNI")"
           fi
-          echo "下载: $ASSET_URL"
-          ASSET_NAME=$(basename "$ASSET_URL")
-          curl -sSL "$ASSET_URL" -o "manager/${ASSET_NAME}"
+
           ls -la manager/
           # 校验是否真的下载到 (404 页面会是一个小文件)
-          SIZE=$(stat -c %s "manager/${ASSET_NAME}")
-          if [ "$SIZE" -lt 1000000 ]; then
-            echo "::warning::管理器 APK 下载失败 (可能无 release), 跳过"
-            rm -f "manager/${ASSET_NAME}"
+          FIRST_APK=$(find manager -maxdepth 1 -type f -name "*.apk" | head -n 1)
+          if [ -z "$FIRST_APK" ]; then
+            echo "::warning::管理器 APK 下载失败 (无 release 且无制品), 跳过"
             exit 0
           fi
-          echo "管理器 APK: ${ASSET_NAME} (${SIZE} 字节)"
+          SIZE=$(stat -c %s "$FIRST_APK")
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "::warning::管理器 APK 体积异常 (${SIZE} 字节), 跳过"
+            rm -f "$FIRST_APK"
+            exit 0
+          fi
+          echo "管理器 APK: $(basename "$FIRST_APK") (${SIZE} 字节)"
 
       - name: 上传管理器 APK
         uses: actions/upload-artifact@v7

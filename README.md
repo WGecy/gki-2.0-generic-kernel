@@ -82,9 +82,9 @@ git checkout 448c303366032107c46d39006c8127a5ca967a26    # 基线 tip
 git am /path/to/patches/*.patch                          # 84 个补丁
 ```
 
-## GitHub Actions 构建（BakaSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
+## GitHub Actions 构建（BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过）
 
-仓库自带一套 Actions 工作流，在 CI 里把 **BakaSU-Ultra（KernelSU）+ SUSFS + NoMount +
+仓库自带一套 Actions 工作流，在 CI 里把 **BakaSU（KernelSU）+ SUSFS + NoMount +
 ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出可直接刷入的 AnyKernel3 包与
 合并 Release。迁移自老内核项目 `ReSukiSU-Ultra-Kernel` 的 `kernel-android15-6-6.yml` 工作流。
 
@@ -92,7 +92,7 @@ ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出
 .github/workflows/
 ├── kernel-android15-6-6.yml   入口: 版本矩阵 + 调用构建 + 拉管理器 APK + 合并发布
 ├── build.yml                  可复用: 拉源码 → git am patches → 集成 → 编译 → 打包
-└── get-manager.yml            拉取 BakaSU-Ultra 管理器 APK
+└── get-manager.yml            拉取 BakaSU 管理器 APK (Release → Actions 制品 两级降级)
 data/android15/6.6.json        版本矩阵 (含基线 commit)
 docs/feature-diff.md           新老内核功能差异表 (迁移状态 + 维护指引)
 scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + NoMount + ADIOS + Unicode 绕过 集成
@@ -105,6 +105,11 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
 
 要点：
 
+- **KernelSU 指向**：集成脚本默认拉 `https://github.com/WGecy/BakaSU`（分支 `main`），
+  可用 `--ksu-repo` / 工作流输入 `ksu_repo` 覆盖。
+- **管理器 APK 来源**：`WGecy/BakaSU` 目前没有 Release，get-manager 会退回下载其
+  `build-manager` 最近一次成功运行的 `Manager-release` 制品；跨仓库读制品需在本仓库配置
+  secret `KSU_REPO_TOKEN`（详见 [`scripts/README-ci.md`](scripts/README-ci.md)）。
 - **基线可复现**：按 `data/android15/6.6.json` 里的 `baseline_commit` 精确浅取 ACK 源码，
   `git am patches/*.patch` 之后才开始集成；基线不一致直接失败（补丁是按该 commit 生成的）。
 - **工具链**：系统 clang 19 + lld 19（Ubuntu 24.04 的 `clang-19`/`lld-19`/`llvm-19`，
@@ -122,7 +127,7 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   `fuse_lookup_revalidate_{initialize,backing,finalize}` 实现（`fs/fuse/{backing.c,dir.c,fuse_i.h}`
   + fuse selftest），`fusebpf-no-eexist.patch` 把 mknod/mkdir/link/symlink 的 `EEXIST` 归一化为
   `ENOENT`（hidden 目录不再把"已存在"当成"创建失败"）。v3 让该修复**无条件生效**，运行时开关随之下线：
-  ReSukiSU-Ultra 侧（BakaSU-Ultra 沿用）已同步删除 `CONFIG_KSU_FUSEBPF_FIX`、`CMD_FUSEBPF_SET`、`ksud fusebpf`
+  ReSukiSU-Ultra 侧（BakaSU 沿用）已同步删除 `CONFIG_KSU_FUSEBPF_FIX`、`CMD_FUSEBPF_SET`、`ksud fusebpf`
   子命令与 `kernel-patches/fusebpf/`，因此内核侧不再需要任何兼容垫片；若换回仍引用旧符号的
   KSU，`ci-integrate.sh` 会立即报错（否则内建 KSU 会在链接 vmlinux 时报 undefined symbol）。
 - **ADIOS 默认调度器与锁定**：只要编了 ADIOS（非 `--no-adios`），就注入

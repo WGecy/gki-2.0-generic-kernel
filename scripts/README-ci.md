@@ -1,6 +1,6 @@
-# GitHub Actions 构建说明（BakaSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
+# GitHub Actions 构建说明（BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过）
 
-本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **BakaSU-Ultra（KernelSU）
+本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **BakaSU（KernelSU）
 + SUSFS + NoMount + ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核
 （GKI 2.0 / android15-6.6，基线 `6.6.158`）上。
 工作流结构迁移自老内核项目 `ReSukiSU-Ultra-Kernel`：
@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | `kernel-android15-6-6.yml` | `.github/workflows/kernel-android15-6-6.yml` | 入口：读版本矩阵 → 调构建 → 拉管理器 APK → 合并发布 |
 | `build.yml` | `.github/workflows/build.yml` | 可复用构建流程（拉源码/补丁/集成/编译/打包） |
-| `get-manager.yml` | `.github/workflows/get-manager.yml` | 拉取 BakaSU-Ultra 管理器 APK |
+| `get-manager.yml` | `.github/workflows/get-manager.yml` | 拉取 BakaSU 管理器 APK |
 | — | `data/android15/6.6.json` | 版本矩阵（含 ACK 基线 commit） |
 | `patches.py` + `build.py` 的集成步骤 | `scripts/ci-integrate.sh` | KSU/fusebpf/SUSFS/NoMount/ADIOS/Unicode 集成（可在本地直接跑） |
 | `third_party/AnyKernel3`、`nomount`、`fusebpf`、`adios`、`unicode_bypass` | 同路径 | 打包模板与各功能补丁资产 |
@@ -23,7 +23,7 @@
 
 | 输入 | 默认 | 说明 |
 | --- | --- | --- |
-| `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU-Ultra`） |
+| `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU`） |
 | `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
 | `adios_lock` | `off` | ADIOS 运行时切换拦截（不影响默认调度器，adios 恒为默认）：`off`=不拦截（默认，允许 init.qti 等把调度器切走）/ `cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios |
 | `custom_suffix` | 空 | 自定义内核后缀，插在 `-android15-8` 与 `-4k` 之间，如 `-test-01` → `6.6.158-android15-8-test-01-4k`；留空时取默认值 `-WGecy` → `6.6.158-android15-8-WGecy-4k` |
@@ -34,7 +34,26 @@
 - `android15-6.6.158-2026-09-AnyKernel3.zip`（AnyKernel3 刷机包）
 - `Image-6.6.158`（裸 Image，配合 `scripts/pack-boot.sh` 可自行重打包 boot.img）
 - `build-info.txt`（基线 commit / KSU 与 SUSFS commit / NoMount sha256 / 构建编号）
-- `BakaSU-Ultra-universal.apk`（管理器，来自 get-manager 任务）
+- `BakaSU-universal.apk`（管理器，来自 get-manager 任务）
+
+### 管理器 APK 从哪来（get-manager.yml）
+
+管理器取自 `WGecy/BakaSU`，两条路按顺序尝试：
+
+1. **GitHub Release**：`/repos/WGecy/BakaSU/releases?per_page=1` 取最新（含 prerelease，
+   不用 `/releases/latest`），资产优先匹配 `/BakaSU-universal.apk`，再退
+   `*-universal-release.apk`，最后任意 `.apk`。
+2. **Actions 制品**（该仓库当前还没有任何 Release，实际走的是这条）：查
+   `build-manager.yml` 最近 10 次成功运行，取其中未过期的 `Manager-release` 制品
+   （repack-manager 重签名后的成品），解压后优先取 universal 那个 apk。
+
+两条路都失败时只打 `::warning::` 并跳过，不阻塞内核构建。
+
+> **需要配置 secret**：制品属于 `WGecy/BakaSU`，本仓库的 `GITHUB_TOKEN` 只能读本仓库，
+> 跨仓库读 Actions 制品会 403。要在本仓库（`Settings → Secrets and variables → Actions`）
+> 添加 `KSU_REPO_TOKEN`：一个有 `WGecy/BakaSU` 读权限的 PAT（经典 PAT 勾 `repo` 即可；
+> fine-grained PAT 需给该仓库 `Actions: Read` + `Contents: Read`）。未配置时工作流会退回
+> `GITHUB_TOKEN`，此时路线 2 必然拿不到 APK，只会产出内核、没有管理器。
 
 ## 构建流程（build.yml）
 
@@ -67,7 +86,7 @@
 
 在 `$GKI_ROOT/common`（已 `git am` 补丁的内核树）上按顺序执行：
 
-1. **KernelSU（BakaSU-Ultra）**
+1. **KernelSU（BakaSU）**
    - `git clone --depth 1 -b <branch> <repo> $GKI_ROOT/KernelSU`
    - `common/drivers/kernelsu` → `KernelSU/kernel` 软链接（已验证该仓库存在 `kernel/Kbuild`，
      kbuild 优先读它，因此可以按 `CONFIG_KSU=y` 内建，而不是 LKM 用的 `kernel/Makefile`）
@@ -82,7 +101,7 @@
      （`tools/testing/selftests/filesystems/fuse/`）
    - `fusebpf-no-eexist.patch`：mknod/mkdir/link/symlink 四条 backing 路径把 `-EEXIST`
      归一化成 `-ENOENT`（v3 起不再用运行时开关判断）
-   - **KSU 侧已同步删除整套开关**（ReSukiSU-Ultra 2026-10-02 起，BakaSU-Ultra 沿用）：`CONFIG_KSU_FUSEBPF_FIX`、
+   - **KSU 侧已同步删除整套开关**（ReSukiSU-Ultra 2026-10-02 起，BakaSU 沿用）：`CONFIG_KSU_FUSEBPF_FIX`、
      `fusebpf_fix` sysfs 参数、`CMD_FUSEBPF_SET` 超调用、ksud 的 `fusebpf enable/disable`
      子命令、`FeatureId::Fusebpf` 与管理器里的 `settings_fusebpf_fix` 字符串都不再存在
      （feature id 6 仅在 `uapi/feature.h` 保留占位，避免编号漂移）
@@ -138,11 +157,14 @@
      使文件名归一化不再忽略零宽字符
    - 硬校验：`mkutf8data.c` 不再含 `ignore_init`，且 shipped 表为 `utf8data[64080]`
    - defconfig：确保 `CONFIG_UNICODE=y`；`--no-unicode` 可跳过
-7. **defconfig**：`CONFIG_KSU=y`、`CONFIG_KSU_NETISOLATE=y`、`CONFIG_NOMOUNT=y`、
+7. **defconfig**：`CONFIG_KSU=y`、`CONFIG_NOMOUNT=y`、
    `CONFIG_KSU_SUSFS*` 10 项、`CONFIG_MQ_IOSCHED_ADIOS=y`、
    `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`、`CONFIG_UNICODE=y`
    （已启用跳过 / `# ... is not set` 原位替换 / 不存在则追加）；
-   fusebpf 已无配置项（内核侧补丁本身即开关）
+   fusebpf 已无配置项（内核侧补丁本身即开关）。
+   注意**不写** `CONFIG_KSU_NETISOLATE`：`WGecy/BakaSU` 的 `kernel/` 里没有 netisolate
+   子模块（那是 BakaSU-Ultra 独有的），Kconfig 也没有该符号，写进去只会被
+   `make gki_defconfig` 静默丢弃
 8. **构建信息**：`$GKI_ROOT/ci-build-info.env`（KSU/SUSFS commit、fusebpf/NoMount/ADIOS/
    Unicode 状态、`NOMOUNT_VERSION`/`NOMOUNT_PROTOCOL` 与 `fs/nomount/nomount.c` 的 sha256），
    供 release notes 使用。
@@ -170,7 +192,7 @@ git clone https://android.googlesource.com/kernel/common "$GKI_ROOT/common"
 git -C "$GKI_ROOT/common" checkout 448c303366032107c46d39006c8127a5ca967a26
 git -C "$GKI_ROOT/common" am "$PWD"/patches/*.patch
 
-# 2) 集成 BakaSU-Ultra + SUSFS + NoMount
+# 2) 集成 BakaSU + SUSFS + NoMount
 bash scripts/ci-integrate.sh --gki-root "$GKI_ROOT" --workspace "$PWD"
 
 # 3) 编译 (与 scripts/build.sh 相同的工具链/参数)
@@ -211,7 +233,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
   其 hunk 上下文与 ACK 版本相关。脚本已用 `-F3` + 落点校验兜住小幅漂移；若上游大改，
   会以“hunk FAILED / 缺少 hook”的形式失败，需要人工跟进。
 - **KSU 与 fusebpf 必须配套（已从"靠垫片兜住"改为"提前失败"）**：内核侧是 v3（修复无条件生效，
-  无 `fuse_bpf_lookup_revalidate_{enabled,set}`），KSU 侧（ReSukiSU-Ultra 2026-10-02 起，BakaSU-Ultra 沿用）也已删掉
+  无 `fuse_bpf_lookup_revalidate_{enabled,set}`），KSU 侧（ReSukiSU-Ultra 2026-10-02 起，BakaSU 沿用）也已删掉
   这两个 extern 与整套运行时开关、`kernel-patches/fusebpf/`。`stage_fusebpf()` 会扫 clone 到的
   KSU 源码：仍引用旧符号时**在应用补丁前**就报错并提示换分支，因此不会再出现"编译 30 分钟后
   链接失败"。若将来 KSU 又引入新的符号依赖，同步改 `third_party/fusebpf/` 与该检查即可。
@@ -219,7 +241,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
   （`tools/testing/selftests/filesystems/fuse/`）。换基线后如果 selftest 变化较大，
   `git apply` 会失败并退回 `patch -p1 -F3`，请在日志里确认没出现 `FAILED`/`.rej`；
   确实只差 selftest 时，可从补丁里剔除这两个文件（内核功能不受影响）。
-- **BakaSU-Ultra Kconfig 变动**：新增/删除 `CONFIG_KSU_SUSFS_*` 时，`make gki_defconfig`
+- **BakaSU Kconfig 变动**：新增/删除 `CONFIG_KSU_SUSFS_*` 时，`make gki_defconfig`
   会静默丢弃未声明的项；工作流的 defconfig 步骤会硬校验关键项，CI 会立刻暴露。
 - **LTO 构建内存**：GitHub runner 约 4 vCPU / 16 GB，工作流用 `-j$(nproc)`；如遇 OOM，
   可把任务里的 `JOBS` 环境变量调小（`-j4` → `-j2`）。

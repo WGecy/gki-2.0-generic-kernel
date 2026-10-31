@@ -2,7 +2,7 @@ name: GKI 2.0 内核构建 - Android 15 (6.6)
 
 # 结构完全参照老内核项目 ReSukiSU-Ultra-Kernel/.github/workflows/kernel-android15-6-6.yml
 #   读取 data/android15/6.6.json 版本矩阵 → 逐个版本调用 build.yml →
-#   拉取 BakaSU-Ultra 管理器 APK → 合并发布到一个 Release
+#   拉取 BakaSU 管理器 APK → 合并发布到一个 Release
 # 本内核版本形态为 "ACK 基线 + patches/ 全部补丁", 因此每个矩阵项都带 baseline_commit
 
 permissions:
@@ -158,10 +158,10 @@ jobs:
             | xargs -r -n1 basename \
             | sed -nE 's/^android15-([0-9]+\.[0-9]+\.[0-9]+)-.*$/\1/p' \
             | sort -u | paste -sd, - || true)
-          REL_TITLE="GKI 2.0 通用内核 (${VERSIONS:-6.6.158} + BakaSU-Ultra + SUSFS + NoMount + 管理器)"
+          REL_TITLE="GKI 2.0 通用内核 (${VERSIONS:-6.6.158} + BakaSU + SUSFS + NoMount + 管理器)"
 
           : > /tmp/notes.txt
-          printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: BakaSU-Ultra (KernelSU) + SUSFS + NoMount\n- BakaSU-Ultra 管理器 APK\n- 自定义后缀: %s\n' \
+          printf 'GKI 2.0 通用内核自动构建\n- 形态: ACK android15-6.6 基线 + patches/ 全部补丁 (单片 + LTO thin + AutoFDO)\n- 集成: BakaSU (KernelSU) + SUSFS + NoMount\n- BakaSU 管理器 APK\n- 自定义后缀: %s\n' \
             "${CUSTOM_SUFFIX:--WGecy} (留空时的默认值)" > /tmp/notes.txt
           # 追加各内核的 build-info (由 build.yml 生成)
           for f in dist/build-info*.txt; do

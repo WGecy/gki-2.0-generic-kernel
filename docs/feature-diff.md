@@ -49,7 +49,7 @@
 | --- | --- | --- | --- |
 | BBRv3（17 算法全开 + 默认 bbr3） | `patches/05-net/06-bbrv3.patch` + defconfig | 仅上游 `CONFIG_TCP_CONG_BBR=y` | ❌ |
 | ipset 全家桶（代理分流/防火墙） | `patches.py apply_ipset()`（`CONFIG_IP_SET*` + `NETFILTER_XT_SET`） | — | ❌ |
-| KSU 网络隔离 | 老项目无 | `CONFIG_KSU_NETISOLATE=y`（ReSukiSU 自带） | ✅ 新项目独有 |
+| KSU 网络隔离 | 老项目无 | `CONFIG_KSU_NETISOLATE=y`（ReSukiSU 自带） | ⚠️ 已去掉：WGecy/BakaSU 不再是 ReSukiSU 分支，kernel/ 里没有 netisolate 子模块，`ci-integrate.sh` 不再写该符号 |
 
 ## 5. 内存 / 性能 / 温控
 
