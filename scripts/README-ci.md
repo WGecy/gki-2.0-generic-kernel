@@ -1,7 +1,7 @@
-# GitHub Actions 构建说明（BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过）
+# GitHub Actions 构建说明（BakaSU + SUSFS + ADIOS + Unicode 绕过）
 
-本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **BakaSU（KernelSU）
-+ SUSFS + NoMount + ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核
+本目录里的 `ci-integrate.sh` 与 `.github/workflows/` 一起，把 **BakaSU（KernelSU，
+自带 NoMount）+ SUSFS + ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核
 （GKI 2.0 / android15-6.6，基线 `6.6.158`）上。
 工作流结构迁移自老内核项目 `ReSukiSU-Ultra-Kernel`：
 
@@ -11,8 +11,8 @@
 | `build.yml` | `.github/workflows/build.yml` | 可复用构建流程（拉源码/补丁/集成/编译/打包） |
 | `get-manager.yml` | `.github/workflows/get-manager.yml` | 拉取 BakaSU 管理器 APK |
 | — | `data/android15/6.6.json` | 版本矩阵（含 ACK 基线 commit） |
-| `patches.py` + `build.py` 的集成步骤 | `scripts/ci-integrate.sh` | KSU/fusebpf/SUSFS/NoMount/ADIOS/Unicode 集成（可在本地直接跑） |
-| `third_party/AnyKernel3`、`nomount`、`fusebpf`、`adios`、`unicode_bypass` | 同路径 | 打包模板与各功能补丁资产 |
+| `patches.py` + `build.py` 的集成步骤 | `scripts/ci-integrate.sh` | KSU/fusebpf/SUSFS/ADIOS/Unicode 集成（可在本地直接跑） |
+| `third_party/AnyKernel3`、`fusebpf`、`adios`、`unicode_bypass` | 同路径 | 打包模板与各功能补丁资产 |
 
 迁移进度与「还缺什么、怎么补」见 [`docs/feature-diff.md`](../docs/feature-diff.md)；
 目前仍未迁移的主要是 BBRv3 / ipset / zram-lz4kd / mTHP / 各类性能温控调优 / OEM vendor 兼容。
@@ -33,7 +33,7 @@
 
 - `android15-6.6.158-2026-09-AnyKernel3.zip`（AnyKernel3 刷机包）
 - `Image-6.6.158`（裸 Image，配合 `scripts/pack-boot.sh` 可自行重打包 boot.img）
-- `build-info.txt`（基线 commit / KSU 与 SUSFS commit / NoMount sha256 / 构建编号）
+- `build-info.txt`（基线 commit / KSU 与 SUSFS commit / NoMount 内建状态与 sha256 / 构建编号）
 - `BakaSU-universal.apk`（管理器，来自 get-manager 任务）
 
 ### 管理器 APK 从哪来（get-manager.yml）
@@ -73,13 +73,15 @@
    然后 `make ... LOCALVERSION=<后缀>-4k -j$(nproc) Image`（`<后缀>` 缺省为 `-WGecy`）
    （单片内核 + LTO thin + AutoFDO，与 `scripts/build.sh` 一致）。
 7. **校验**：`kernel.release` / Image 版本串 / `vmlinux` 中 `kernelsu_init`、
-   `susfs is initialized` 两项内建标记；NoMount v2.2.0 已无 v1 的 `nm_rules` kmem_cache 名，
-   改为三条判据任一命中即通过：`vmlinux` 的 `nomount_init` 符号、`.rodata` 的
-   `NoMount: Loaded successfully`、`out/modules.builtin.modinfo` 的
-   `NoMount Path Redirection VFS Subsystem`（`MODULE_DESCRIPTION` 串只进 `.modinfo`，
-   而该段被链接脚本 `DISCARDS` 丢弃，不能当唯一判据）；另校验 `CONFIG_NOMOUNT=y` 时
-   `fs/nomount/` 四件套齐全、`fs/Kconfig` 已 `source "fs/nomount/Kconfig"`、
-   `fs/Makefile` 有 `obj-$(CONFIG_NOMOUNT) += nomount/`。
+   `susfs is initialized` 两项内建标记；NoMount 由 BakaSU 的 `kernel/nomount/` 随
+   `kernelsu.o` 一起编入，判据两条（任一命中即通过）：`vmlinux` 里的 `ksu_nomount_init`
+   符号，或 `strings` 到的 `NoMount: Loaded successfully`（`nm_info` 的
+   `KERN_INFO "NoMount: "` 前缀在编译期拼进字面量）。注意 BakaSU 版把入口改名成
+   `ksu_nomount_init` 并删掉了 `MODULE_*` 与 `module_init`，所以老的
+   `nomount_init` 符号名与 `.modinfo` 描述串两条判据都不再成立。
+   配置阶段另外校验 `CONFIG_KSU=y` 时 `drivers/kernelsu/nomount/{nomount.c,nomount.h,nomount_api.h}`
+   齐全、`drivers/kernelsu/Kbuild` 含 `nomount/nomount.o`、且内核树里**没有** `fs/nomount/`
+   （有则说明还有老脚本在复制第二份，会 `-EEXIST`）。
 8. **打包**：AnyKernel3 目录内放入 `Image` 后 zip。
 
 ## ci-integrate.sh 做了什么
@@ -112,26 +114,25 @@
 3. **SUSFS**（gitlab 上游，自动跟随最新）
    - 克隆 `susfs4ksu` 对应分支，复制 `50_add_susfs_in_gki-android15-6.6.patch` 与
      `kernel_patches/{fs,include/linux}/*`（`susfs.c`、`susfs.h`、`susfs_def.h`）
-   - `git apply` → 失败退回 `patch -p1 -F3 -N --batch`（NoMount 与 SUSFS 都要往
-     `fs/Makefile` 同一处插一行，模糊匹配是必要的）
+   - `git apply` → 失败退回 `patch -p1 -F3 -N --batch`（多个补丁会往同一批公共文件
+     —— 如 `fs/Makefile`、`block/Makefile` —— 里插行，模糊匹配是必要的）
    - 6.6 上下文修复（`fs/proc/base.c` 的 `dma-buf.h` 锚点、`susfs_def.h` 补齐）
    - **硬校验**：`fs/exec.c` 的 `ksu_handle_execveat`、`fs/stat.c` 的 `ksu_handle_stat`
      （sucompat 依赖，缺失即失败）
-4. **NoMount v2.2.0**（本仓库 `third_party/nomount`，与上游 `maxsteeel/nomount` `kernel/src`
-   同源；v2 起是**目录式内建**，不再有 hook 补丁）
-   - `third_party/nomount/{Kconfig,Makefile,nomount.c,nomount.h}` 整体复制到 `fs/nomount/`
-     （用真实目录而非上游 `setup.sh` 的符号链接：CI 内核树每次重新克隆，且符号链接指向
-     工作区外会破坏 out-of-tree 构建）
-   - `fs/Makefile` 追加 `obj-$(CONFIG_NOMOUNT) += nomount/`（并删除 v1 遗留的
-     `obj-$(CONFIG_NOMOUNT) += nomount.o`）；`fs/Kconfig` 在最后一个 `endmenu` 前插入
-     `source "fs/nomount/Kconfig"`；若树里仍有内联 `config NOMOUNT` 直接失败（重复定义）
-   - 清理 v1.x 遗留文件：`fs/nomount.c`、`fs/nomount.h`、`include/linux/nomount.h`
-   - 校验 `NM_MAGIC_SIG`、`register_key_type(&nm_key_type)`、`NOMOUNT_BASE_VERSION "22"`
-     等落点。v2 的 IPC 是 `add_key("nomount", "trigger", &ptr, 8, -1)` + 4096 字节单页
-     payload（协议 v22），**内核侧与用户态（ksud / BakaSU 管理器）必须同版本**，否则
-     `add_key` 必然返回 `-ECANCELED` 且 `payload.status` 永远是错
-   - 无 .git 时上游 `kernel/src/Makefile` 探测不到 `nomount` 仓库，`NOMOUNT_VERSION`
-     落为 `"22"`（无 commit 后缀），符合预期
+4. **NoMount：不单独集成**（BakaSU 内核自带）
+   - BakaSU 的 `kernel/` 里有 `kernel/nomount/{nomount.c,nomount.h,nomount_api.h}`，
+     `kernel/Kbuild` 在 `CONFIG_KSU=y` 且内核版本落在 4.9 - 6.12 时把 `nomount/nomount.o`
+     编进 `kernelsu-objs`，没进这个范围会给一条 `NoMount: kernel X.Y is outside ...` 注记
+   - 第 1 步建的 `drivers/kernelsu` 是**整目录软链接**，所以内建 KSU 一进来 NoMount 就已经
+     在 `vmlinux` 里了，不需要再往 `fs/nomount/` 复制一份
+   - 曾经的本仓库 `third_party/nomount/`（上游 v2.2.0 四件套）+ `stage_nomount()` 已移除：
+     两份都会 `register_key_type(&nm_key_type)`，先注册的赢，后一个拿到 `-EEXIST`，
+     dmesg 出现 `KernelSU: failed to init nomount: -17`，管理器里 nomount 状态恒为不可用
+   - 要关掉它：给内核传 `CONFIG_KSU_DISABLE_NOMOUNT=y`（`kernel/Kconfig` 的
+     `config KSU_DISABLE_NOMOUNT`），不是 `--no-nomount`
+   - 用户态协议：`add_key("nomount", "trigger", &ptr, 8, -1)` + 4096 字节单页 payload
+     （协议 v22，`kernel/nomount/nomount.h` 的 `NOMOUNT_BASE_VERSION`），**内核侧与
+     ksud / 管理器必须同版本**，否则 `add_key` 返回 `-ECANCELED` 且 `payload.status` 永远是错
 5. **ADIOS IO 调度器**（本仓库 `third_party/adios`，迁移自老项目 `features.adios`）
    - 应用 `14-adios.patch`：新增 `block/adios.c`，并注册 `block/Kconfig.iosched`
      （`MQ_IOSCHED_ADIOS` / `MQ_IOSCHED_DEFAULT_ADIOS`）与 `block/Makefile`
@@ -157,7 +158,7 @@
      使文件名归一化不再忽略零宽字符
    - 硬校验：`mkutf8data.c` 不再含 `ignore_init`，且 shipped 表为 `utf8data[64080]`
    - defconfig：确保 `CONFIG_UNICODE=y`；`--no-unicode` 可跳过
-7. **defconfig**：`CONFIG_KSU=y`、`CONFIG_NOMOUNT=y`、
+7. **defconfig**：`CONFIG_KSU=y`、
    `CONFIG_KSU_SUSFS*` 10 项、`CONFIG_MQ_IOSCHED_ADIOS=y`、
    `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`、`CONFIG_UNICODE=y`
    （已启用跳过 / `# ... is not set` 原位替换 / 不存在则追加）；
@@ -165,9 +166,10 @@
    注意**不写** `CONFIG_KSU_NETISOLATE`：`WGecy/BakaSU` 的 `kernel/` 里没有 netisolate
    子模块（那是 BakaSU-Ultra 独有的），Kconfig 也没有该符号，写进去只会被
    `make gki_defconfig` 静默丢弃
-8. **构建信息**：`$GKI_ROOT/ci-build-info.env`（KSU/SUSFS commit、fusebpf/NoMount/ADIOS/
-   Unicode 状态、`NOMOUNT_VERSION`/`NOMOUNT_PROTOCOL` 与 `fs/nomount/nomount.c` 的 sha256），
-   供 release notes 使用。
+8. **构建信息**：`$GKI_ROOT/ci-build-info.env`（KSU/SUSFS commit、fusebpf/ADIOS/
+   Unicode 状态；NoMount 记录 `NOMOUNT=builtin|missing`、从
+   `drivers/kernelsu/nomount/nomount.h` 抽出的 `NOMOUNT_VERSION` 与 `nomount.c` 的 sha256），
+   供 release notes 与排障使用。
 
 脚本幂等：重复执行只更新 KernelSU/SUSFS 源码，已应用的补丁自动跳过（`Reversed`）。
 结束时若存在 `.rej` 会打印并失败（确认无碍可加 `--allow-rej`）；补丁调用带
@@ -192,7 +194,7 @@ git clone https://android.googlesource.com/kernel/common "$GKI_ROOT/common"
 git -C "$GKI_ROOT/common" checkout 448c303366032107c46d39006c8127a5ca967a26
 git -C "$GKI_ROOT/common" am "$PWD"/patches/*.patch
 
-# 2) 集成 BakaSU + SUSFS + NoMount
+# 2) 集成 BakaSU(含内置 NoMount) + SUSFS + ADIOS + Unicode
 bash scripts/ci-integrate.sh --gki-root "$GKI_ROOT" --workspace "$PWD"
 
 # 3) 编译 (与 scripts/build.sh 相同的工具链/参数)
@@ -208,7 +210,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
      -j8 Image
 ```
 
-常用开关：`--no-susfs`、`--no-nomount`、`--allow-rej`、`--ksu-branch <tag>`、
+常用开关：`--no-susfs`、`--no-fusebpf`、`--no-adios`、`--no-unicode`、`--allow-rej`、`--ksu-branch <tag>`、
 `--susfs-branch <branch>`、`--android-version android15`、`--kernel-version 6.6`；
 `bash scripts/ci-integrate.sh --help` 可看全部参数。
 

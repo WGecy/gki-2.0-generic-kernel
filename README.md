@@ -82,9 +82,9 @@ git checkout 448c303366032107c46d39006c8127a5ca967a26    # 基线 tip
 git am /path/to/patches/*.patch                          # 84 个补丁
 ```
 
-## GitHub Actions 构建（BakaSU + SUSFS + NoMount + ADIOS + Unicode 绕过）
+## GitHub Actions 构建（BakaSU + SUSFS + ADIOS + Unicode 绕过）
 
-仓库自带一套 Actions 工作流，在 CI 里把 **BakaSU（KernelSU）+ SUSFS + NoMount +
+仓库自带一套 Actions 工作流，在 CI 里把 **BakaSU（KernelSU，自带 NoMount）+ SUSFS +
 ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出可直接刷入的 AnyKernel3 包与
 合并 Release。迁移自老内核项目 `ReSukiSU-Ultra-Kernel` 的 `kernel-android15-6-6.yml` 工作流。
 
@@ -95,11 +95,10 @@ ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出
 └── get-manager.yml            拉取 BakaSU 管理器 APK (Release → Actions 制品 两级降级)
 data/android15/6.6.json        版本矩阵 (含基线 commit)
 docs/feature-diff.md           新老内核功能差异表 (迁移状态 + 维护指引)
-scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + NoMount + ADIOS + Unicode 绕过 集成
+scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + ADIOS + Unicode 绕过 集成
 third_party/AnyKernel3/        打包模板 (迁移自老项目)
 third_party/adios/             ADIOS IO 调度器补丁 (迁移自老项目)
 third_party/fusebpf/           fusebpf 内核侧补丁 v3 (lookup revalidate + EEXIST 归一化)
-third_party/nomount/           NoMount v2.2.0 内核源 (Kconfig/Makefile/nomount.c+nomount.h)
 third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 归一化数据表)
 ```
 
@@ -118,8 +117,7 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
   上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
-  50_add_susfs 补丁 + 源码）→ NoMount v2.2.0（目录式内建 `fs/nomount/`，dentry/inode ops
-  劫持 + `add_key` 单页 payload IPC；v2 起不再需要 VFS hook 补丁）→ ADIOS（调度器补丁 +
+  50_add_susfs 补丁 + 源码）→ ADIOS（调度器补丁 +
   无条件把 `elevator_get_default()` 改成 adios；`adios_lock` 只决定是否在
   `elevator_change()` 注入拦截，默认 `off` 不拦）→ Unicode 绕过
   （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
@@ -137,12 +135,12 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   `cpq` = 拒绝切到 `cpq`；`all` = 拒绝任何非 adios 切换。工作流输入 `adios_lock`（`off`/`cpq`/`all`）。
 - **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
   `kernelsu_init`、`susfs is initialized` —— 防止“补丁打上了但没编译进去”。
-  NoMount v2.2.0 已无 v1 的 `nm_rules` slab 名，改为三条判据**任一命中即通过**：
-  `vmlinux` 里的 `nomount_init` 符号（`fs_initcall` 注册，必然保留）、
-  `.rodata` 里的 `NoMount: Loaded successfully`（`nm_info` 前缀 + 格式串编译期拼接）、
-  或 `out/modules.builtin.modinfo` 里的 `NoMount Path Redirection VFS Subsystem`。
-  **`MODULE_DESCRIPTION` 串不能当唯一判据**：它只落在 `.modinfo` 段，而该段被
-  `include/asm-generic/vmlinux.lds.h` 的 `COMMON_DISCARDS` 在链接最终 `vmlinux` 时丢弃。
+  NoMount 不是本仓库集成的，而是 BakaSU 的 `kernel/nomount/` 随 `kernelsu.o` 一起编进去的
+  （`kernel/Kbuild`，仅 4.9 - 6.12 生效），判据是 `vmlinux` 里 `strings` 得到
+  `NoMount: Loaded successfully`（`nm_info` 的 `KERN_INFO "NoMount: "` 前缀在编译期拼进
+  字面量）。BakaSU 版把入口改名为 `ksu_nomount_init` 并删掉了 `MODULE_*` / `module_init`，
+  所以老的 `nomount_init` 符号名与 `.modinfo` 里 `NoMount Path Redirection VFS Subsystem`
+  两条判据都已失效（`.modinfo` 段还会被 `COMMON_DISCARDS` 在链接 `vmlinux` 时丢弃）。
 - **产物**：`android15-6.6.<sub>-<snapshot>-AnyKernel3.zip`、裸 `Image-6.6.<sub>`、
   `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
 
@@ -153,7 +151,8 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
 
 ## 说明与边界
 
-- 仓库内的内核树是**纯 GKI**（不含 KSU/SUSFS/NoMount/ADIOS/Unicode 绕过）；root 与隐藏能力
+- 仓库内的内核树是**纯 GKI**（不含 KSU/SUSFS/ADIOS/Unicode 绕过；NoMount 由 KSU 内核
+  `kernel/nomount/` 自带，随 `CONFIG_KSU` 内建）；root 与隐藏能力
   由上面这套 Actions 工作流在构建时集成，本地构建（`scripts/build.sh`）默认仍是纯 GKI。
 - 不含任何编译产物（无 Image / boot.img / .o / .ko）
 - 部分 OEM-GKI 设备的 stock 内核带厂商私有补丁（例如某些机型的 f2fs hybrid-UFS / IOSTAT 等）。
