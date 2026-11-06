@@ -6,7 +6,8 @@
 #    1. 集成 BakaSU (KernelSU, 自带内核侧 NoMount): drivers/kernelsu 符号链接 + Makefile/Kconfig
 #    2. 应用 fusebpf 内核侧补丁 (v3 上游式 lookup revalidate + EEXIST 归一化,
 #       third_party/fusebpf; 修复无条件生效, KSU 侧已无运行时开关)
-#    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
+#    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch,
+#       版本钉死在 SUSFS_PIN 指向的 commit —— 上游分支是移动目标, 不允许漂移)
 #    4. 应用 ADIOS IO 调度器 (third_party/adios) 并强制其为默认调度器 (elevator_get_default());
 #       运行时切换拦截由 --adios-lock 决定: off(默认)=不拦截, cpq=只拦 cpq, all=只允许 adios
 #    5. 应用 Unicode 零宽字符绕过 (third_party/unicode_bypass)
@@ -29,7 +30,8 @@
 #    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/BakaSU
 #    --ksu-branch BR       KernelSU 分支/标签, 默认 main
 #    --susfs-repo URL      SUSFS 仓库, 默认 https://gitlab.com/simonpunk/susfs4ksu.git
-#    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6
+#    --susfs-pin SHA       SUSFS 固定 commit, 默认 93114563fd6b (gki-android15-6.6 上
+#                          最后一次成功编译内核时用的版本; 上游分支是移动目标, 必须钉死)
 #    --android-version V   默认 android15 (决定 SUSFS 补丁文件名)
 #    --kernel-version V    默认 6.6
 #    --no-fusebpf          跳过 fusebpf 内核侧补丁 (third_party/fusebpf 的两个补丁)
@@ -60,7 +62,12 @@ WORKSPACE="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 KSU_REPO="https://github.com/WGecy/BakaSU"
 KSU_BRANCH="main"
 SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
-SUSFS_BRANCH="gki-android15-6.6"
+# 版本钉死: 9311456 = gki-android15-6.6 分支上最后一次成功编译内核 (run 41209142211,
+# 2026-10-31) 所用的 SUSFS commit。上游会继续往前推 (从 c7f670f 起引入
+# CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER, 该配置项在 BakaSU 的 Kconfig 里不存在,
+# 连带两个 static 函数失去调用者, 直接撞 -Wunused-function → -Werror)。
+# 所以这里只认 commit, 不跟随分支头; 要升级就改这里 (或传给 --susfs-pin)。
+SUSFS_PIN="${SUSFS_PIN:-93114563fd6b08092b9ce8c0309738c921ac8bd1}"
 ANDROID_VERSION="android15"
 KERNEL_VERSION="6.6"
 ENABLE_FUSEBPF=1
@@ -84,7 +91,9 @@ while [ $# -gt 0 ]; do
     --ksu-repo)        KSU_REPO="${2:?}"; shift 2 ;;
     --ksu-branch)      KSU_BRANCH="${2:?}"; shift 2 ;;
     --susfs-repo)      SUSFS_REPO="${2:?}"; shift 2 ;;
-    --susfs-branch)    SUSFS_BRANCH="${2:?}"; shift 2 ;;
+    --susfs-pin)       SUSFS_PIN="${2:?}"; shift 2 ;;
+    --susfs-pin=*)     SUSFS_PIN="${1#*=}"; shift ;;
+    --susfs-branch)    die "--susfs-branch 已废弃: 现在按 commit 钉版本, 请改用 --susfs-pin SHA" ;;
     --android-version) ANDROID_VERSION="${2:?}"; shift 2 ;;
     --kernel-version)  KERNEL_VERSION="${2:?}"; shift 2 ;;
     --no-fusebpf)      ENABLE_FUSEBPF=0; shift ;;
@@ -108,7 +117,7 @@ log "GKI_ROOT   : $GKI_ROOT"
 log "工作区     : $WORKSPACE"
 log "KernelSU   : $KSU_REPO @ $KSU_BRANCH"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf v3 (无条件生效, KSU 侧无开关)"
-[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_BRANCH"
+[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_PIN (固定 commit)"
 
 # ============================================================================
 #  通用小工具
@@ -337,19 +346,29 @@ stage_susfs() {
   local susfs_dir="$GKI_ROOT/susfs4ksu"
   local patch_name="50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"
 
+  # 钉版本: 只认 SUSFS_PIN 这个 commit, 绝不 checkout 分支头。
+  # 上游 gki-android15-6.6 是移动目标, 跟随它曾把构建打挂 (见 SUSFS_PIN 处的注释)。
   if [ -d "$susfs_dir/.git" ]; then
-    # 同 stage_ksu: 拉取失败时退用本地已有副本
-    if git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_BRANCH" 2>&1 | tail -2; then
-      git -C "$susfs_dir" checkout -q -B "$SUSFS_BRANCH" FETCH_HEAD
-    else
-      warn "SUSFS 更新失败 (网络?), 使用本地已有版本"
+    # 已有副本: 目标 commit 就在库里时直接检出 (离线也能复现同一棵树)
+    if ! git -C "$susfs_dir" cat-file -e "${SUSFS_PIN}^{commit}" 2>/dev/null; then
+      git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_PIN" 2>&1 | tail -2 \
+        || die "SUSFS 拉取失败: $SUSFS_REPO @ $SUSFS_PIN"
     fi
+    git -C "$susfs_dir" checkout -q --detach "$SUSFS_PIN"
   else
     rm -rf "$susfs_dir"
-    git clone --depth 1 -b "$SUSFS_BRANCH" "$SUSFS_REPO" "$susfs_dir"
+    # GitLab 支持按 SHA 浅取, 所以用 init+remote+fetch 代替 clone -b <branch>
+    git init -q "$susfs_dir"
+    git -C "$susfs_dir" remote add origin "$SUSFS_REPO"
+    git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_PIN" 2>&1 | tail -2 \
+      || die "SUSFS 拉取失败: $SUSFS_REPO @ $SUSFS_PIN"
+    git -C "$susfs_dir" checkout -q --detach "$SUSFS_PIN"
   fi
+  # 硬校验: 检出的必须是钉死的那个 commit (浅取/离线兜底都不能把版本换掉)
+  [ "$(git -C "$susfs_dir" rev-parse HEAD)" = "$SUSFS_PIN" ] \
+    || die "SUSFS 版本不符: 期望 $SUSFS_PIN, 实际 $(git -C "$susfs_dir" rev-parse HEAD)"
   SUSFS_COMMIT="$(git -C "$susfs_dir" rev-parse --short HEAD)"
-  log "SUSFS commit: $SUSFS_COMMIT ($SUSFS_BRANCH)"
+  log "SUSFS commit: $SUSFS_COMMIT (固定 @ ${SUSFS_PIN:0:12})"
 
   local patch="$susfs_dir/kernel_patches/$patch_name"
   [ -f "$patch" ] || die "SUSFS 补丁缺失: $patch"
@@ -610,7 +629,8 @@ stage_defconfig() {
     echo "KSU_COMMIT=${KSU_COMMIT:-unknown}"
     echo "FUSEBPF=$([ "$ENABLE_FUSEBPF" = 1 ] && echo enabled || echo disabled)"
     echo "SUSFS_REPO=$SUSFS_REPO"
-    echo "SUSFS_BRANCH=$SUSFS_BRANCH"
+    echo "SUSFS_PIN=$SUSFS_PIN"
+    echo "SUSFS_UPSTREAM_REF=gki-android15-6.6"
     echo "SUSFS_COMMIT=${SUSFS_COMMIT:-disabled}"
     # NoMount 由 BakaSU 内核自带 (kernel/nomount/), 没有独立开关; 这里记录它是否真的
     # 进了树, 便于 release notes 与排障 (drivers/kernelsu -> BakaSU/kernel 的整目录软链接)
@@ -662,7 +682,7 @@ fi
 log "================ 集成摘要 ================"
 log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, 无条件生效; KSU 侧无开关/垫片)"
-[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
+[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_PIN (固定 commit, short $SUSFS_COMMIT)"
 log "NoMount  : 由 BakaSU kernel/nomount/ 自带 (随 CONFIG_KSU 内建, 无需单独集成)"
 [ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (默认调度器=adios, 锁定=$ADIOS_LOCK)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过)"

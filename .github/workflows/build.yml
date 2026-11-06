@@ -61,11 +61,11 @@ on:
         required: false
         type: string
         default: "main"
-      susfs_branch:
-        description: "SUSFS 分支 (gitlab simonpunk/susfs4ksu)"
+      susfs_pin:
+        description: "SUSFS 固定 commit (gitlab simonpunk/susfs4ksu; 必须填 40 位 SHA, 不要填分支名)"
         required: false
         type: string
-        default: "gki-android15-6.6"
+        default: "93114563fd6b08092b9ce8c0309738c921ac8bd1"
       adios_lock:
         description: "ADIOS 运行时切换拦截: off(不拦截,默认) / cpq(只拦 cpq) / all(只允许 adios); 不影响默认调度器, 始终为 adios"
         required: false
@@ -101,7 +101,7 @@ jobs:
           echo "内核形态  : 单片 (monolithic) + LTO thin + AutoFDO"
           echo "工具链    : clang 19 + lld 19 ($LLVM_BIN)"
           echo "KernelSU  : BakaSU @ ${{ inputs.ksu_branch }}"
-          echo "SUSFS     : ${{ inputs.susfs_branch }}"
+          echo "SUSFS     : ${{ inputs.susfs_pin }} (固定 commit)"
           echo "NoMount   : 随 BakaSU 内建 (kernel/nomount/, 无需单独集成)"
           echo "自定义后缀: ${CUSTOM_SUFFIX:--WGecy} (留空时的默认值)"
           echo "========================================"
@@ -232,7 +232,7 @@ jobs:
           KERNEL_VERSION: ${{ inputs.kernel_version }}
           KSU_REPO: ${{ inputs.ksu_repo }}
           KSU_BRANCH: ${{ inputs.ksu_branch }}
-          SUSFS_BRANCH: ${{ inputs.susfs_branch }}
+          SUSFS_PIN: ${{ inputs.susfs_pin }}
           ADIOS_LOCK: ${{ inputs.adios_lock }}
         run: |
           set -euo pipefail
@@ -243,7 +243,7 @@ jobs:
             --kernel-version "$KERNEL_VERSION" \
             --ksu-repo "$KSU_REPO" \
             --ksu-branch "$KSU_BRANCH" \
-            --susfs-branch "$SUSFS_BRANCH" \
+            --susfs-pin "$SUSFS_PIN" \
             --adios-lock "$ADIOS_LOCK"
 
       # ==================== defconfig ====================
@@ -421,7 +421,7 @@ jobs:
             echo "ACK 基线    : ${{ inputs.baseline_commit }} (快照 ${{ inputs.snapshot }})"
             echo "基线补丁    : patches/ 全部补丁 (git am)"
             echo "KernelSU    : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
-            echo "SUSFS       : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
+            echo "SUSFS       : $SUSFS_REPO @ $SUSFS_PIN (固定 commit $SUSFS_COMMIT)"
             if [ "${NOMOUNT:-missing}" = "builtin" ]; then
               echo "NoMount     : 内置 (随 BakaSU kernel/nomount/) 协议 v${NOMOUNT_VERSION:-?} nomount.c sha256: ${NOMOUNT_SHA256:0:12}"
             else

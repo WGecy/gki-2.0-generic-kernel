@@ -20,11 +20,11 @@ on:
         required: false
         type: string
         default: "main"
-      susfs_branch:
-        description: "SUSFS 分支 (默认 gki-android15-6.6)"
+      susfs_pin:
+        description: "SUSFS 固定 commit (默认 93114563fd6b; 必须填 40 位 SHA, 不要填分支名)"
         required: false
         type: string
-        default: "gki-android15-6.6"
+        default: "93114563fd6b08092b9ce8c0309738c921ac8bd1"
       adios_lock:
         description: "ADIOS 调度器锁定 (off=不拦截 / cpq=只拦 cpq / all=只允许 adios); 默认调度器始终为 adios"
         required: true
@@ -95,7 +95,7 @@ jobs:
       snapshot: ${{ matrix.snapshot }}
       baseline_commit: ${{ matrix.baseline_commit }}
       ksu_branch: ${{ inputs.ksu_branch }}
-      susfs_branch: ${{ inputs.susfs_branch }}
+      susfs_pin: ${{ inputs.susfs_pin }}
       adios_lock: ${{ inputs.adios_lock }}
       custom_suffix: ${{ inputs.custom_suffix }}
       build_time: ${{ inputs.build_time }}

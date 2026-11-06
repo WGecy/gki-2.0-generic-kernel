@@ -117,7 +117,8 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
 - **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
   上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
-  50_add_susfs 补丁 + 源码）→ ADIOS（调度器补丁 +
+  50_add_susfs 补丁 + 源码，**版本钉死**在 `SUSFS_PIN`：默认 `9311456`，即最后一次
+  成功编译所用的 commit，不跟随会漂移的分支头）→ ADIOS（调度器补丁 +
   无条件把 `elevator_get_default()` 改成 adios；`adios_lock` 只决定是否在
   `elevator_change()` 注入拦截，默认 `off` 不拦）→ Unicode 绕过
   （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
@@ -145,7 +146,7 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 
   `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
 
 触发方式：`Actions → GKI 2.0 内核构建 - Android 15 (6.6) → Run workflow`，
-可填 KSU 仓库/分支、SUSFS 分支、自定义内核后缀、自定义构建时间。详见
+可填 KSU 仓库/分支、SUSFS 固定 commit、自定义内核后缀、自定义构建时间。详见
 [scripts/README-ci.md](scripts/README-ci.md)；**还缺哪些老项目功能、怎么补**见
 [docs/feature-diff.md](docs/feature-diff.md)。
 

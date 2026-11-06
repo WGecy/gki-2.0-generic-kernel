@@ -24,7 +24,7 @@
 | 输入 | 默认 | 说明 |
 | --- | --- | --- |
 | `ksu_branch` | `main` | KernelSU 分支/标签（仓库固定为 `https://github.com/WGecy/BakaSU`） |
-| `susfs_branch` | `gki-android15-6.6` | SUSFS 分支（gitlab `simonpunk/susfs4ksu`） |
+| `susfs_pin` | `93114563fd6b...` | SUSFS **固定 commit**（gitlab `simonpunk/susfs4ksu`）。分支名不再接受：上游 `gki-android15-6.6` 是移动目标，跟随分支头曾把构建打挂（见下文「SUSFS 版本钉死」） |
 | `adios_lock` | `off` | ADIOS 运行时切换拦截（不影响默认调度器，adios 恒为默认）：`off`=不拦截（默认，允许 init.qti 等把调度器切走）/ `cpq`=只拒绝切到 cpq（澎湃OS4 的 init.qti 会写 cpq）/ `all`=只允许 adios |
 | `custom_suffix` | 空 | 自定义内核后缀，插在 `-android15-8` 与 `-4k` 之间，如 `-test-01` → `6.6.158-android15-8-test-01-4k`；留空时取默认值 `-WGecy` → `6.6.158-android15-8-WGecy-4k` |
 | `build_time` | `N` | `N`/留空 = 当前 UTC，否则写入 `KBUILD_BUILD_TIMESTAMP` |
@@ -111,8 +111,11 @@
      `extern` 引用 `fuse_bpf_lookup_revalidate_{enabled,set}`，会**在应用补丁前直接失败**，
      而不是等到链接 vmlinux 时才报 undefined symbol（历史教训: 2026-09-22 run 35693420939）
    - 如确实不想用：`--no-fusebpf`（只跳过 `third_party/fusebpf` 的两个补丁，已无配置项要关）
-3. **SUSFS**（gitlab 上游，自动跟随最新）
-   - 克隆 `susfs4ksu` 对应分支，复制 `50_add_susfs_in_gki-android15-6.6.patch` 与
+3. **SUSFS**（gitlab 上游，**版本钉死**）
+   - 只认 `SUSFS_PIN`（默认 `93114563fd6b08092b9ce8c0309738c921ac8bd1`，= `gki-android15-6.6`
+     分支上最后一次成功编译内核时用的 commit），`git fetch <SHA>` + `checkout --detach`，
+     检出后还会硬校验 `rev-parse HEAD == SUSFS_PIN`，浅取/离线兜底都换不掉版本
+   - 复制 `50_add_susfs_in_gki-android15-6.6.patch` 与
      `kernel_patches/{fs,include/linux}/*`（`susfs.c`、`susfs.h`、`susfs_def.h`）
    - `git apply` → 失败退回 `patch -p1 -F3 -N --batch`（多个补丁会往同一批公共文件
      —— 如 `fs/Makefile`、`block/Makefile` —— 里插行，模糊匹配是必要的）
@@ -211,7 +214,7 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
 ```
 
 常用开关：`--no-susfs`、`--no-fusebpf`、`--no-adios`、`--no-unicode`、`--allow-rej`、`--ksu-branch <tag>`、
-`--susfs-branch <branch>`、`--android-version android15`、`--kernel-version 6.6`；
+`--susfs-pin <sha>`、`--android-version android15`、`--kernel-version 6.6`；
 `bash scripts/ci-integrate.sh --help` 可看全部参数。
 
 ## 打包模板说明
@@ -231,8 +234,17 @@ make O=out ARCH=arm64 LLVM=1 LOCALVERSION=-WGecy-4k \
 
 ## 已知风险点
 
-- **SUSFS 上游是移动目标**：`50_add_susfs_in_gki-android15-6.6.patch` 由 simonpunk 维护，
-  其 hunk 上下文与 ACK 版本相关。脚本已用 `-F3` + 落点校验兜住小幅漂移；若上游大改，
+- **SUSFS 版本已钉死（不再跟随分支头）**：`SUSFS_PIN` 默认
+  `93114563fd6b08092b9ce8c0309738c921ac8bd1`（`gki-android15-6.6` 上最后一次成功编译内核的
+  commit，2026-10-31 run 41209142211）。为什么必须钉：上游从 `c7f670f` 起引入
+  `CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER`，该符号只在 KernelSU 侧 Kconfig 补丁里声明，
+  BakaSU 的 `kernel/Kconfig` 没有 → 宏不生效 → `fs/susfs.c` 的
+  `susfs_switch_to_ksu_domain` / `susfs_restore_creds` 失去调用者 →
+  `-Wunused-function` 撞 `-Werror`，构建在 `fs/susfs.c` 直接失败（run 42211286621）。
+  升级 SUSFS 的流程：先在本仓库 `kernel/Kconfig` 补上上游新增配置项（或确认新版本不再需要），
+  再改 `SUSFS_PIN`（或工作流输入 `susfs_pin`）跑一次完整构建验证。
+- **SUSFS 补丁的 hunk 上下文与 ACK 版本相关**：`50_add_susfs_in_gki-android15-6.6.patch`
+  由 simonpunk 维护。脚本已用 `-F3` + 落点校验兜住小幅漂移；若换基线后大改，
   会以“hunk FAILED / 缺少 hook”的形式失败，需要人工跟进。
 - **KSU 与 fusebpf 必须配套（已从"靠垫片兜住"改为"提前失败"）**：内核侧是 v3（修复无条件生效，
   无 `fuse_bpf_lookup_revalidate_{enabled,set}`），KSU 侧（ReSukiSU-Ultra 2026-10-02 起，BakaSU 沿用）也已删掉
