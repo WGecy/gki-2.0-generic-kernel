@@ -1,0 +1,89 @@
+# ============================================================================
+#  GKI 2.0 内核构建 - Android 15 (6.6)
+# ----------------------------------------------------------------------------
+#  手动触发: 读取 data/<android>/<kernel>.json 的 entries 生成矩阵,
+#  逐个调用 .github/workflows/build.yml 编译内核 (仅编译, 不打包/不发布)。
+# ============================================================================
+name: GKI 2.0 内核构建 - Android 15 (6.6)
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_branch:
+        description: 'KernelSU (BakaSU) 分支/标签'
+        required: false
+        default: 'main'
+        type: string
+      susfs_branch:
+        description: 'SUSFS 分支'
+        required: false
+        default: 'gki-android15-6.6'
+        type: string
+      adios_lock:
+        description: 'ADIOS 运行时切换拦截'
+        required: true
+        default: 'off'
+        type: choice
+        options:
+          - 'off'
+          - 'cpq'
+          - 'all'
+      custom_suffix:
+        description: '额外版本后缀 (可为空)'
+        required: false
+        default: ''
+        type: string
+      build_time:
+        description: '固定编译时间戳 (N 表示使用当前时间)'
+        required: false
+        default: 'N'
+        type: string
+
+jobs:
+  prepare-matrix:
+    name: 读取构建矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 生成矩阵
+        id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=./data/android15/6.6.json
+          [ -f "$FILE" ] || { echo "::error::找不到 $FILE"; exit 1; }
+          MATRIX="$(jq -c '[ .entries[] | {android_version, kernel_version, sub_level, snapshot, baseline_commit} ]' "$FILE")"
+          if [ -z "$MATRIX" ] || [ "$MATRIX" = '[]' ]; then
+            echo '::error::构建矩阵为空, 检查 data/android15/6.6.json 的 entries'
+            exit 1
+          fi
+          echo "矩阵: $MATRIX"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  build-kernels-a15-6-6:
+    name: 编译 ${{ matrix.kernel_version }}${{ matrix.sub_level }}
+    needs: prepare-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: ${{ matrix.android_version }}
+      kernel_version: ${{ matrix.kernel_version }}
+      sub_level: ${{ matrix.sub_level }}
+      snapshot: ${{ matrix.snapshot }}
+      baseline_commit: ${{ matrix.baseline_commit }}
+      ksu_branch: ${{ inputs.ksu_branch }}
+      susfs_branch: ${{ inputs.susfs_branch }}
+      adios_lock: ${{ inputs.adios_lock }}
+      custom_suffix: ${{ inputs.custom_suffix }}
+      build_time: ${{ inputs.build_time }}

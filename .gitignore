@@ -6,3 +6,9 @@ out/
 *.pem
 Image*
 __pycache__/
+
+# CI 构建产物与本地内核树
+gki-kernel/
+dist/
+ci-build-info.env
+
