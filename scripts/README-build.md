@@ -2,11 +2,11 @@
 
 ## 目标
 构建 GKI 2.0（android15-6.6）单片（monolithic）Image，版本串形如
-`6.6.<SUBLEVEL>-android15-8[-<可选后缀>]-4k`（默认 `6.6.158-android15-8-4k`）。
+`6.6.<SUBLEVEL>-android15-8[-<可选后缀>]-4k`（默认 `6.6.158-android15-8-WGecy-4k`）。
 
 - 基线：AOSP ACK `android15-6.6` tip，commit `448c303366032107c46d39006c8127a5ca967a26`
 - 补丁：`patches/` 共 84 个
-  - 3 个通用：vermagic/CRC 绕过、`LOCALVERSION=-android15-8-4k`、`SUBLEVEL=158`
+  - 3 个通用：vermagic/CRC 绕过、`CONFIG_LOCALVERSION="-android15-8"`（+ 关闭 `LOCALVERSION_AUTO`）、`SUBLEVEL=158`
   - 1 个单片/LTO 配置：`0083-arm64-gki_defconfig-align-monolithic-image-with-Haru.patch`
   - 1 个 LTO 符号名：`0084-lto-keep-plain-symbol-names-for-statics-internalized.patch`
   - 79 条 stable 回补：`v6.6.143..v6.6.157`
@@ -67,8 +67,9 @@ make O=out ARCH=arm64 LLVM=1 \
      -j$(nproc) Image
 #   或："$GKI_ROOT/scripts/build.sh"   # LTO+AutoFDO 峰值约 15GB；仅 OOM 时用 JOBS=N 降并行
 #
-# 版本串默认取 gki_defconfig 的 CONFIG_LOCALVERSION="-android15-8-4k"；
-# 需要自定义后缀时追加 LOCALVERSION=<后缀> 覆盖（如 LOCALVERSION=-android15-8-custom-4k）。
+# 版本串 = CONFIG_LOCALVERSION("-android15-8") + LOCALVERSION 段；
+# scripts/build.sh 默认后缀 -WGecy（→ 6.6.158-android15-8-WGecy-4k），-4k 由脚本追加在末尾；
+# 需要自定义后缀时覆盖 LOCALVERSION=<后缀>（如 LOCALVERSION=-test-01 → 6.6.158-android15-8-test-01-4k）。
 
 # 7) 校验
 strings out/arch/arm64/boot/Image | grep -m1 '6\.6\.158'
@@ -100,15 +101,19 @@ CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
 # CONFIG_LTO_NONE is not set
 # CONFIG_TRANSPARENT_HUGEPAGE_MADVISE is not set
 # CONFIG_PCIEASPM_DEFAULT is not set
-CONFIG_LOCALVERSION="-android15-8-4k"
+CONFIG_LOCALVERSION="-android15-8"
 # CONFIG_LOCALVERSION_AUTO is not set
 ```
 
 ## 版本串
 `KERNELVERSION`（`Makefile`：`VERSION=6 PATCHLEVEL=6 SUBLEVEL=158`）= `6.6.158`；
-`CONFIG_LOCALVERSION="-android15-8-4k"` + `LOCALVERSION_AUTO` 关闭 → `uname -r` 输出
-`6.6.158-android15-8-4k`。其中 `-android15-8` 对应 KMI（`KMI_GENERATION=8`）、`-4k` 为页大小；
-需要自定义后缀可在 `gki_defconfig` 改 `CONFIG_LOCALVERSION` 或构建时传 `LOCALVERSION=<后缀>`。
+拼接顺序固定为 `${KERNELVERSION}${file_localversion}${config_localversion}${LOCALVERSION}${scm_version}`：
+`CONFIG_LOCALVERSION`（`-android15-8`）在前段，`LOCALVERSION`（后缀 + `-4k`）在后段；
+`LOCALVERSION_AUTO` 关闭 + `LOCALVERSION` 非空 → 不追加 `-gHASH`/`+`/`-dirty`。
+默认（`LOCALVERSION=-WGecy-4k`）→ `uname -r` = `6.6.158-android15-8-WGecy-4k`。
+其中 `-android15-8` 对应 KMI（`KMI_GENERATION=8`）、`-4k` 为页大小；
+需要自定义后缀时传 `LOCALVERSION=<后缀>`，`-4k` 由 `scripts/build.sh` 追加在末尾。
+**别把 `-4k` 写回 `CONFIG_LOCALVERSION`** —— 那样后缀会被挤到 `-4k` 之后。
 
 ## 打包
 ```bash

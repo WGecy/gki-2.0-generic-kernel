@@ -1,15 +1,16 @@
 diff --git a/fs/fuse/backing.c b/fs/fuse/backing.c
-index 25fb34f..4f16036 100644
+index 21fb9cdd20aa3..2c93713ae3a00 100644
 --- a/fs/fuse/backing.c
 +++ b/fs/fuse/backing.c
-@@ -2546,3 +2546,77 @@ ssize_t fuse_bpf_simple_request(struct fuse_mount *fm, struct fuse_bpf_args *bpf
- 		};
- 	return res;
+@@ -1187,6 +1187,153 @@ int fuse_lookup_backing(struct fuse_bpf_args *fa, struct inode *dir,
+ 	return err;
  }
-+
-+int fuse_lookup_revalidate_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,
-+	       struct inode *dir, struct dentry *entry, unsigned int flags)
+ 
++int fuse_lookup_revalidate_initialize(struct fuse_bpf_args *fa,
++		struct fuse_lookup_revalidate_io *fli, struct inode *dir,
++		struct dentry *entry, unsigned int flags)
 +{
++	*fli = (struct fuse_lookup_revalidate_io) {};
 +	*fa = (struct fuse_bpf_args) {
 +		.nodeid = get_fuse_inode(dir)->nodeid,
 +		.opcode = FUSE_LOOKUP,
@@ -33,58 +34,196 @@ index 25fb34f..4f16036 100644
 +	return 0;
 +}
 +
-+int fuse_lookup_revalidate_backing(struct fuse_bpf_args *fa, struct inode *dir,
-+			  struct dentry *entry, unsigned int flags)
++int fuse_lookup_revalidate_backing(struct fuse_bpf_args *fa,
++		struct inode *dir, struct dentry *entry, unsigned int flags)
 +{
-+	struct fuse_dentry *fuse_entry = get_fuse_dentry(entry);
-+	struct dentry *backing_entry = fuse_entry->backing_path.dentry;
++	struct fuse_lookup_revalidate_io *fli = container_of(
++		fa->out_args[0].value, struct fuse_lookup_revalidate_io, feo);
++	struct fuse_dentry *dir_fuse_entry = get_fuse_dentry(entry->d_parent);
 +	struct fuse_entry_out *feo = (void *)fa->out_args[0].value;
++	struct path backing_parent_path;
++	struct dentry *backing_entry;
++	struct inode *backing_inode;
 +	struct kstat stat;
 +	int err;
 +
-+	if (d_is_negative(backing_entry)) {
++	if (!dir_fuse_entry || !dir_fuse_entry->backing_path.dentry) {
 +		fa->error_in = -ENOENT;
-+		return 0;
++		return -ENOENT;
 +	}
 +
-+	err = vfs_getattr(&fuse_entry->backing_path, &stat,
-+				  STATX_BASIC_STATS, 0);
++	get_fuse_backing_path(entry->d_parent, &backing_parent_path);
++	if (!backing_parent_path.dentry) {
++		fa->error_in = -ENOENT;
++		return -ENOENT;
++	}
++	backing_inode = d_inode(backing_parent_path.dentry);
++	if (!backing_inode) {
++		path_put(&backing_parent_path);
++		fa->error_in = -ENOENT;
++		return -ENOENT;
++	}
++
++	inode_lock_nested(backing_inode, I_MUTEX_PARENT);
++	backing_entry = lookup_one_qstr_excl(&entry->d_name,
++					    backing_parent_path.dentry, flags);
++	inode_unlock(backing_inode);
++	if (IS_ERR(backing_entry)) {
++		err = PTR_ERR(backing_entry);
++		path_put(&backing_parent_path);
++		return err;
++	}
++
++	fli->backing_path = (struct path) {
++		.dentry = backing_entry,
++		.mnt = mntget(backing_parent_path.mnt),
++	};
++	path_put(&backing_parent_path);
++
++	if (d_is_negative(backing_entry)) {
++		fa->error_in = -ENOENT;
++		return -ENOENT;
++	}
++
++	err = follow_down(&fli->backing_path, 0);
 +	if (err)
-+		goto err_out;
++		return err;
 +
-+	fuse_stat_to_attr(get_fuse_conn(dir),
-+			  backing_entry->d_inode, &stat, &feo->attr);
++	err = vfs_getattr(&fli->backing_path, &stat, STATX_BASIC_STATS, 0);
++	if (err)
++		return err;
++
++	fuse_stat_to_attr(get_fuse_conn(dir), d_inode(fli->backing_path.dentry),
++			  &stat, &feo->attr);
 +	return 0;
-+
-+err_out:
-+	return err;
 +}
 +
-+void *fuse_lookup_revalidate_finalize(struct fuse_bpf_args *fa, struct inode *dir,
-+			   struct dentry *entry, unsigned int flags)
++void *fuse_lookup_revalidate_finalize(struct fuse_bpf_args *fa,
++		struct inode *dir, struct dentry *entry, unsigned int flags)
 +{
-+	struct fuse_entry_bpf_out *febo = fa->out_args[1].value;
-+	struct fuse_entry_bpf *feb = container_of(febo, struct fuse_entry_bpf,
-+						  out);
-+	if (feb->backing_file)
++	struct fuse_lookup_revalidate_io *fli;
++	struct fuse_entry_bpf_out *febo;
++	struct fuse_entry_bpf *feb;
++	struct fuse_dentry *fuse_entry;
++	struct fuse_inode *fi;
++	void *ret = NULL;
++
++	/* The prefilter path has not restored the output arguments yet. */
++	if (fa->opcode & FUSE_PREFILTER)
++		return NULL;
++
++	fli = container_of(fa->out_args[0].value,
++				  struct fuse_lookup_revalidate_io, feo);
++	febo = fa->out_args[1].value;
++	feb = container_of(febo, struct fuse_entry_bpf, out);
++	fuse_entry = get_fuse_dentry(entry);
++	fi = d_inode(entry) ? get_fuse_inode(d_inode(entry)) : NULL;
++
++	if (d_inode(entry) && fli->backing_path.dentry) {
++		switch (feb->out.backing_action) {
++		case FUSE_ACTION_KEEP:
++			if (!fi || !fi->backing_inode || !fuse_entry ||
++			    !fuse_entry->backing_path.dentry ||
++			    fi->backing_inode != d_inode(fli->backing_path.dentry) ||
++			    !path_equal(&fuse_entry->backing_path,
++					&fli->backing_path))
++				ret = ERR_PTR(-ENOENT);
++			break;
++		case FUSE_ACTION_REMOVE:
++			if ((fi && fi->backing_inode) ||
++			    (fuse_entry && fuse_entry->backing_path.dentry))
++				ret = ERR_PTR(-ENOENT);
++			break;
++		case FUSE_ACTION_REPLACE:
++			if (!feb->backing_file || IS_ERR(feb->backing_file) ||
++			    !fuse_entry || !fi ||
++			    fi->backing_inode != feb->backing_file->f_inode ||
++			    !path_equal(&fuse_entry->backing_path,
++					&feb->backing_file->f_path))
++				ret = ERR_PTR(-ENOENT);
++			break;
++		default:
++			ret = ERR_PTR(-ENOENT);
++		}
++	}
++
++	if (feb->backing_file && !IS_ERR(feb->backing_file))
 +		fput(feb->backing_file);
-+	return NULL;
++	path_put_init(&fli->backing_path);
++	return ret;
 +}
 +
-+/* ReSukiSU-Ultra: FUSEBPF 直通修复运行时开关 (默认开启)
-+ * 修复: 未授权 App 通过 FUSE-BPF 绕过安装列表权限读取包名 */
-+bool fuse_bpf_lookup_revalidate_enabled = true;
-+EXPORT_SYMBOL_GPL(fuse_bpf_lookup_revalidate_enabled);
-+void fuse_bpf_lookup_revalidate_set(bool enable)
-+{
-+	fuse_bpf_lookup_revalidate_enabled = enable;
-+}
-+EXPORT_SYMBOL_GPL(fuse_bpf_lookup_revalidate_set);
+ int fuse_handle_backing(struct fuse_entry_bpf *feb, struct inode **backing_inode,
+ 			struct path *backing_path)
+ {
 diff --git a/fs/fuse/dir.c b/fs/fuse/dir.c
-index 522bd04..3f8c756 100644
+index 333fe335808ba..024f44179948f 100644
 --- a/fs/fuse/dir.c
 +++ b/fs/fuse/dir.c
-@@ -273,12 +273,20 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
+@@ -236,21 +236,56 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
+ 	struct fuse_mount *fm;
+ 	struct fuse_inode *fi;
+ 	int ret;
++#ifdef CONFIG_FUSE_BPF
++	struct inode *parent_inode;
++	struct fuse_err_ret fer;
++	struct fuse_inode *parent_fi;
++#endif
+ 
+ 	inode = d_inode_rcu(entry);
+ 	if (inode && fuse_is_bad(inode))
+ 		goto invalid;
+ 
+ #ifdef CONFIG_FUSE_BPF
+-	/* TODO: Do we need bpf support for revalidate?
+-	 * If the lower filesystem says the entry is invalid, FUSE probably shouldn't
+-	 * try to fix that without going through the normal lookup path...
+-	 */
++	/* A cached decision must be checked for the current caller. */
++	if (flags & LOOKUP_RCU) {
++		parent_inode = d_inode_rcu(entry->d_parent);
++		parent_fi = parent_inode ? get_fuse_inode(parent_inode) : NULL;
++		if (parent_fi && parent_fi->backing_inode && parent_fi->bpf) {
++			ret = -ECHILD;
++			goto out;
++		}
++	} else {
++		parent = dget_parent(entry);
++		parent_inode = d_inode(parent);
++		parent_fi = parent_inode ? get_fuse_inode(parent_inode) : NULL;
++		if (parent_fi && parent_fi->backing_inode && parent_fi->bpf) {
++			fer = fuse_bpf_backing(parent_inode,
++					       struct fuse_lookup_revalidate_io,
++					       fuse_lookup_revalidate_initialize,
++					       fuse_lookup_revalidate_backing,
++					       fuse_lookup_revalidate_finalize,
++					       parent_inode, entry, flags);
++			dput(parent);
++			if (!fer.ret)
++				ret = 0;
++			else if (IS_ERR(fer.result)) {
++				ret = PTR_ERR(fer.result);
++				if (ret == -ENOENT)
++					ret = inode ? 0 : 1;
++			} else {
++				ret = inode ? 1 : 0;
++			}
++			goto out;
++		}
++		dput(parent);
++	}
++
++	/* Non-BPF backing dentries still use their lower dentry revalidator. */
+ 	if (get_fuse_dentry(entry)->backing_path.dentry) {
+ 		ret = fuse_revalidate_backing(entry, flags);
+-		if (ret <= 0) {
++		if (ret <= 0)
+ 			goto out;
+-		}
+ 	}
+ #endif
+ 	if (time_before64(fuse_dentry_time(entry), get_jiffies_64()) ||
+@@ -273,9 +308,6 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
  		parent = dget_parent(entry);
  
  #ifdef CONFIG_FUSE_BPF
@@ -92,41 +231,177 @@ index 522bd04..3f8c756 100644
 -		 * bpf based lookup_revalidate here.
 -		 */
  		if (get_fuse_inode(parent->d_inode)->backing_inode) {
-+			struct inode *dir = parent->d_inode;
-+			struct fuse_err_ret fer;
-+
-+			fer = fuse_bpf_backing(dir, struct fuse_lookup_io,
-+						fuse_lookup_revalidate_initialize,
-+						fuse_lookup_revalidate_backing,
-+						fuse_lookup_revalidate_finalize,
-+						dir, entry, flags);
  			dput(parent);
--			ret = 1;
-+			if (fuse_bpf_lookup_revalidate_enabled && fer.ret && PTR_ERR(fer.result))
-+				ret = PTR_ERR(fer.result);
-+			else
-+				ret = 1;
- 			goto out;
- 		}
- #endif
+ 			ret = 1;
 diff --git a/fs/fuse/fuse_i.h b/fs/fuse/fuse_i.h
-index baab5b6..a6ebef2 100644
+index baab5b6aebf8b..905ba03a722f1 100644
 --- a/fs/fuse/fuse_i.h
 +++ b/fs/fuse/fuse_i.h
-@@ -1834,6 +1834,16 @@ int fuse_access_initialize(struct fuse_bpf_args *fa, struct fuse_access_in *fai,
- int fuse_access_backing(struct fuse_bpf_args *fa, struct inode *inode, int mask);
- void *fuse_access_finalize(struct fuse_bpf_args *fa, struct inode *inode, int mask);
+@@ -1738,6 +1738,12 @@ struct fuse_lookup_io {
+ 	struct fuse_entry_bpf feb;
+ };
  
-+int fuse_lookup_revalidate_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *feo,
-+	       struct inode *dir, struct dentry *entry, unsigned int flags);
++struct fuse_lookup_revalidate_io {
++	struct fuse_entry_out feo;
++	struct fuse_entry_bpf feb;
++	struct path backing_path;
++};
 +
-+/* ReSukiSU-Ultra: FUSEBPF 直通修复开关 */
-+extern bool fuse_bpf_lookup_revalidate_enabled;
-+int fuse_lookup_revalidate_backing(struct fuse_bpf_args *fa, struct inode *dir,
-+			  struct dentry *entry, unsigned int flags);
-+void *fuse_lookup_revalidate_finalize(struct fuse_bpf_args *fa, struct inode *dir,
-+				struct dentry *entry, unsigned int flags);
+ int fuse_handle_backing(struct fuse_entry_bpf *feb, struct inode **backing_inode,
+ 			struct path *backing_path);
+ int fuse_handle_bpf_prog(struct fuse_entry_bpf *feb, struct inode *parent,
+@@ -1749,6 +1755,13 @@ int fuse_lookup_backing(struct fuse_bpf_args *fa, struct inode *dir,
+ 			  struct dentry *entry, unsigned int flags);
+ struct dentry *fuse_lookup_finalize(struct fuse_bpf_args *fa, struct inode *dir,
+ 			   struct dentry *entry, unsigned int flags);
++int fuse_lookup_revalidate_initialize(struct fuse_bpf_args *fa,
++		struct fuse_lookup_revalidate_io *fli, struct inode *dir,
++		struct dentry *entry, unsigned int flags);
++int fuse_lookup_revalidate_backing(struct fuse_bpf_args *fa,
++		struct inode *dir, struct dentry *entry, unsigned int flags);
++void *fuse_lookup_revalidate_finalize(struct fuse_bpf_args *fa,
++		struct inode *dir, struct dentry *entry, unsigned int flags);
+ int fuse_revalidate_backing(struct dentry *entry, unsigned int flags);
+ 
+ int fuse_canonical_path_initialize(struct fuse_bpf_args *fa,
+diff --git a/tools/testing/selftests/filesystems/fuse/fuse_test.c b/tools/testing/selftests/filesystems/fuse/fuse_test.c
+index 06305ea9f6b16..de31b1ade669c 100644
+--- a/tools/testing/selftests/filesystems/fuse/fuse_test.c
++++ b/tools/testing/selftests/filesystems/fuse/fuse_test.c
+@@ -2009,6 +2009,72 @@ static int bpf_test_lookup_postfilter(const char *mount_dir)
+ 	return result;
+ }
+ 
++static int bpf_map_set_u32(int map_fd, uint32_t key, uint32_t value)
++{
++	union bpf_attr attr = {
++		.map_fd = map_fd,
++		.key = ptr_to_u64(&key),
++		.value = ptr_to_u64(&value),
++		.flags = BPF_ANY,
++	};
 +
- /*
-  * FUSE caches dentries and attributes with separate timeout.  The
-  * time in jiffies until the dentry/attributes are valid is stored in
++	return syscall(__NR_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
++}
++
++static int bpf_test_lookup_revalidate(const char *mount_dir)
++{
++	const char *package = "com.example.package";
++	int result = TEST_FAILURE;
++	int bpf_fd = -1;
++	int src_fd = -1;
++	int fuse_dev = -1;
++	int package_fd = -1;
++	int visibility_map_fd = -1;
++	struct map_relocation *map_relocations = NULL;
++	size_t map_count = 0;
++	struct stat st;
++	uint32_t key = 0;
++	uint32_t hidden = 0;
++
++	TEST(src_fd = open(ft_src, O_DIRECTORY | O_RDONLY | O_CLOEXEC),
++	     src_fd != -1);
++	TESTSYSCALL(mkdirat(src_fd, package, 0777));
++	TESTEQUAL(install_elf_bpf("test_bpf.bpf", "test_lookup_revalidate",
++				  &bpf_fd, &map_relocations, &map_count), 0);
++	for (size_t i = 0; i < map_count; ++i)
++		if (!strcmp(map_relocations[i].name, "lookup_visibility"))
++			visibility_map_fd = map_relocations[i].fd;
++	TESTNE(visibility_map_fd, -1);
++	TESTEQUAL(bpf_map_set_u32(visibility_map_fd, key, hidden), 0);
++	TESTEQUAL(mount_fuse(mount_dir, bpf_fd, src_fd, &fuse_dev), 0);
++
++	TESTSYSCALL(s_stat(s_path(s(mount_dir), s(package)), &st));
++	/* Keep the positive dentry in use while its visibility changes. */
++	TEST(package_fd = s_open(s_path(s(mount_dir), s(package)),
++				 O_DIRECTORY | O_RDONLY), package_fd != -1);
++	hidden = 1;
++	TESTEQUAL(bpf_map_set_u32(visibility_map_fd, key, hidden), 0);
++	TESTEQUAL(s_stat(s_path(s(mount_dir), s(package)), &st), -1);
++	TESTEQUAL(errno, ENOENT);
++	hidden = 0;
++	TESTEQUAL(bpf_map_set_u32(visibility_map_fd, key, hidden), 0);
++	TESTSYSCALL(s_stat(s_path(s(mount_dir), s(package)), &st));
++
++	result = TEST_SUCCESS;
++out:
++	close(package_fd);
++	close(fuse_dev);
++	umount(mount_dir);
++	close(bpf_fd);
++	close(src_fd);
++	for (size_t i = 0; i < map_count; ++i) {
++		free(map_relocations[i].name);
++		close(map_relocations[i].fd);
++	}
++	free(map_relocations);
++	return result;
++}
++
+ /**
+  * Test that a file made via create_and_open correctly gets the bpf assigned
+  * from the negative lookup
+@@ -2338,6 +2404,7 @@ int main(int argc, char *argv[])
+ 		MAKE_TEST(bpf_test_no_readdirplus_without_nodeid),
+ 		MAKE_TEST(bpf_test_revalidate_handle_backing_fd),
+ 		MAKE_TEST(bpf_test_lookup_postfilter),
++		MAKE_TEST(bpf_test_lookup_revalidate),
+ 		MAKE_TEST(flock_test),
+ 		MAKE_TEST(bpf_test_create_and_remove_bpf),
+ 		MAKE_TEST(bpf_test_mkdir_and_remove_bpf),
+diff --git a/tools/testing/selftests/filesystems/fuse/test_bpf.c b/tools/testing/selftests/filesystems/fuse/test_bpf.c
+index a014b915c059b..6985c0c71c12c 100644
+--- a/tools/testing/selftests/filesystems/fuse/test_bpf.c
++++ b/tools/testing/selftests/filesystems/fuse/test_bpf.c
+@@ -3,6 +3,13 @@
+ 
+ #include "test_fuse_bpf.h"
+ 
++SEC("maps") struct fuse_bpf_map lookup_visibility = {
++	BPF_MAP_TYPE_ARRAY,
++	sizeof(__u32),
++	sizeof(__u32),
++	1,
++};
++
+ SEC("test_readdir_redact")
+ /* return FUSE_BPF_BACKING to use backing fs, 0 to pass to usermode */
+ int readdir_test(struct fuse_bpf_args *fa)
+@@ -445,7 +452,8 @@ int error_test(struct fuse_bpf_args *fa)
+ 	}
+ 	case FUSE_MKDIR | FUSE_POSTFILTER: {
+ 		bpf_printk("mkdir postfilter");
+-		if (fa->error_in == -EEXIST)
++		/* Backing FUSE may normalize hidden EEXIST to ENOENT. */
++		if (fa->error_in == -EEXIST || fa->error_in == -ENOENT)
+ 			return -EPERM;
+ 
+ 		return 0;
+@@ -506,6 +514,27 @@ int lookuppostfilter_test(struct fuse_bpf_args *fa)
+ 	}
+ }
+ 
++SEC("test_lookup_revalidate")
++int lookup_revalidate_test(struct fuse_bpf_args *fa)
++{
++	if (fa->opcode == (FUSE_LOOKUP | FUSE_PREFILTER))
++		return FUSE_BPF_BACKING | FUSE_BPF_POST_FILTER;
++
++	if (fa->opcode == (FUSE_LOOKUP | FUSE_POSTFILTER)) {
++		struct fuse_entry_bpf_out *febo = fa->out_args[1].value;
++		__u32 key = 0;
++		__u32 *hidden = bpf_map_lookup_elem(&lookup_visibility, &key);
++
++		if (hidden && *hidden) {
++			febo->bpf_action = FUSE_ACTION_REMOVE;
++			return -ENOENT;
++		}
++		febo->bpf_action = FUSE_ACTION_KEEP;
++	}
++
++	return FUSE_BPF_BACKING;
++}
++
+ SEC("test_create_remove")
+ int createremovebpf_test(struct fuse_bpf_args *fa)
+ {

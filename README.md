@@ -8,7 +8,7 @@
 - **补丁**：共 **84 个**（`patches/`）
   - **3 个通用补丁**
     1. `kernel/module/version.c` — vermagic / 符号 CRC 校验绕过（`same_magic()`、`check_version()` 恒返回 1）
-    2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION="-android15-8-4k"`，关闭 `LOCALVERSION_AUTO`
+    2. `arch/arm64/configs/gki_defconfig` — `CONFIG_LOCALVERSION="-android15-8"`，关闭 `LOCALVERSION_AUTO`
     3. `Makefile` — `SUBLEVEL = 158`
   - **1 个单片/LTO 配置补丁**：`0083-arm64-gki_defconfig-align-monolithic-image-with-Haru.patch`
   - **1 个 LTO 符号名补丁**：`0084-lto-keep-plain-symbol-names-for-statics-internalized.patch`
@@ -16,8 +16,9 @@
   - **79 条 stable 回补**：从上游 stable `v6.6.143..v6.6.157` 中挑选的修复
     （f2fs 16 · clk/qcom 15 · fuse 13 · GIC-v3-ITS 4 · erofs 3 · arm64 3 · selinux 2 · overlayfs 2 · 其余各 1）
 - **版本串**：形如 `6.6.<SUBLEVEL>-android15-8[-<可选后缀>]-4k`（`uname -r`）。`-android15-8`
-  对应 KMI（`BRANCH=android15-6.6` 的 `KMI_GENERATION=8`），`-4k` 是页大小；可选后缀默认为空，
-  即默认版本串为 `6.6.158-android15-8-4k`
+  对应 KMI（`BRANCH=android15-6.6` 的 `KMI_GENERATION=8`，来自 `CONFIG_LOCALVERSION`），`-4k` 是页大小
+  （来自 `LOCALVERSION`，永远在末尾）；可选后缀缺省为 `-WGecy`，即默认版本串
+  `6.6.158-android15-8-WGecy-4k`
 - **状态**：已在 GKI 2.0（android15-6.6）真机开机验证
 
 ## 通用补丁 1：vermagic / CRC 绕过做什么
@@ -51,9 +52,13 @@ make O=out ARCH=arm64 LLVM=1 \
      -j$(nproc) Image
 ```
 
-默认版本串取 `gki_defconfig` 的 `CONFIG_LOCALVERSION="-android15-8-4k"`；需要自定义后缀时，可在
-`gki_defconfig` 改 `CONFIG_LOCALVERSION`，或在上面两条 `make` 命令后追加 `LOCALVERSION=<后缀>`
-（例如 `LOCALVERSION=-android15-8-custom-4k`）覆盖。
+版本串由 `scripts/setlocalversion` 逐段拼接：`${KERNELVERSION}${file_localversion}` +
+  `CONFIG_LOCALVERSION`（前段，`-android15-8`）+ `LOCALVERSION`（后段）+ `scm_version`。
+`scripts/build.sh` 默认传 `LOCALVERSION=-WGecy-4k`，得到 `6.6.158-android15-8-WGecy-4k`；
+需要自定义后缀时用 `LOCALVERSION=<后缀>` 覆盖，`-4k` 由脚本自动追加
+（例如 `LOCALVERSION=-test-01` → `6.6.158-android15-8-test-01-4k`）。
+**不要把 `-4k` 写回 `CONFIG_LOCALVERSION`**：它在拼接序列里排在 `LOCALVERSION` 之前，
+会把后缀挤到 `-4k` 后面变成 `...-4k-<后缀>`。
 
 - AutoFDO profile 必须用**绝对路径**：`O=out` 下编译器 cwd 是 `out/`，相对路径会报
   `clang: error: no such file or directory`。profile 位于树内
@@ -77,9 +82,9 @@ git checkout 448c303366032107c46d39006c8127a5ca967a26    # 基线 tip
 git am /path/to/patches/*.patch                          # 84 个补丁
 ```
 
-## GitHub Actions 构建（ReSukiSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过）
+## GitHub Actions 构建（BakaSU + SUSFS + ADIOS + Unicode 绕过）
 
-仓库自带一套 Actions 工作流，在 CI 里把 **ReSukiSU-Ultra（KernelSU）+ SUSFS + NoMount +
+仓库自带一套 Actions 工作流，在 CI 里把 **BakaSU（KernelSU，自带 NoMount）+ SUSFS +
 ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出可直接刷入的 AnyKernel3 包与
 合并 Release。迁移自老内核项目 `ReSukiSU-Ultra-Kernel` 的 `kernel-android15-6-6.yml` 工作流。
 
@@ -87,33 +92,55 @@ ADIOS IO 调度器 + Unicode 零宽字符绕过** 集成到本内核上，产出
 .github/workflows/
 ├── kernel-android15-6-6.yml   入口: 版本矩阵 + 调用构建 + 拉管理器 APK + 合并发布
 ├── build.yml                  可复用: 拉源码 → git am patches → 集成 → 编译 → 打包
-└── get-manager.yml            拉取 ReSukiSU-Ultra 管理器 APK
+└── get-manager.yml            拉取 BakaSU 管理器 APK (Release → Actions 制品 两级降级)
 data/android15/6.6.json        版本矩阵 (含基线 commit)
 docs/feature-diff.md           新老内核功能差异表 (迁移状态 + 维护指引)
-scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + NoMount + ADIOS + Unicode 绕过 集成
+scripts/ci-integrate.sh        KSU + fusebpf + SUSFS + ADIOS + Unicode 绕过 集成
 third_party/AnyKernel3/        打包模板 (迁移自老项目)
 third_party/adios/             ADIOS IO 调度器补丁 (迁移自老项目)
-third_party/fusebpf/           KSU fusebpf 内核侧补丁 (迁移自老项目, KSU_FUSEBPF_FIX 依赖)
-third_party/nomount/           NoMount hook 补丁 + nomount.c/h 源码
-third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (迁移自老项目)
+third_party/fusebpf/           fusebpf 内核侧补丁 v3 (lookup revalidate + EEXIST 归一化)
+third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (改 fs/unicode 归一化数据表)
 ```
 
 要点：
 
+- **KernelSU 指向**：集成脚本默认拉 `https://github.com/WGecy/BakaSU`（分支 `main`），
+  可用 `--ksu-repo` / 工作流输入 `ksu_repo` 覆盖。
+- **管理器 APK 来源**：`WGecy/BakaSU` 目前没有 Release，get-manager 会退回下载其
+  `build-manager` 最近一次成功运行的 `Manager-release` 制品；跨仓库读制品需在本仓库配置
+  secret `KSU_REPO_TOKEN`（详见 [`scripts/README-ci.md`](scripts/README-ci.md)）。
 - **基线可复现**：按 `data/android15/6.6.json` 里的 `baseline_commit` 精确浅取 ACK 源码，
   `git am patches/*.patch` 之后才开始集成；基线不一致直接失败（补丁是按该 commit 生成的）。
-- **工具链**：AOSP 预编译 `clang-r510928` + `kernel/prebuilts/build-tools`（pahole/lz4/dtc），
-  `ARCH=arm64 LLVM=1`，与 `scripts/build.sh` 完全一致；工具链走 Actions 缓存。
-- **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（KSU 仓库
-  `kernel-patches/fusebpf`，提供内核侧 `fuse_bpf_lookup_revalidate_*`）→ SUSFS（gitlab 上游
-  50_add_susfs 补丁 + 源码）→ NoMount（hook 补丁 + 源码）→ ADIOS（调度器补丁 +
-  `elevator_get_default()` 强制 adios + `elevator_change()` 拦截 `cpq`）→ Unicode 绕过
-  （改 `fs/unicode` 归一化数据表）→ defconfig 注入开关。
-- **ADIOS 锁定**：澎湃OS4（Android 17）的 `init.qti.kernel.rc` 会在每次开机把 userdata
-  调度器写成 `cpq`，因此默认在 `elevator_change()` 拒绝切到 `cpq`（工作流输入
-  `adios_lock`：`cpq`/`all`/`off`）；刷机后可验 `cat /sys/block/sda/queue/scheduler` 应为 `[adios]`。
+- **工具链**：系统 clang 19 + lld 19（Ubuntu 24.04 的 `clang-19`/`lld-19`/`llvm-19`，
+  `/usr/lib/llvm-19/bin` 前置到 `PATH`，与 `scripts/env.sh` 同一套做法；CFI type hash 与 clang
+  版本绑定，必须与 KMI 同为 clang 19）+ `kernel/prebuilts/build-tools`（pahole/lz4/dtc，
+  走 Actions 缓存）；`ARCH=arm64 LLVM=1`。
+- **集成顺序**：KernelSU（`drivers/kernelsu` 内建）→ fusebpf（`third_party/fusebpf`，
+  上游式 lookup revalidate v3 + `EEXIST→ENOENT` 归一化）→ SUSFS（gitlab 上游
+  50_add_susfs 补丁 + 源码）→ ADIOS（调度器补丁 +
+  无条件把 `elevator_get_default()` 改成 adios；`adios_lock` 只决定是否在
+  `elevator_change()` 注入拦截，默认 `off` 不拦）→ Unicode 绕过
+  （改 `fs/unicode` 归一化数据表，去掉零宽字符 ignore 类）→ defconfig 注入开关。
+- **fusebpf v3**：`third_party/fusebpf/fusebpf-lookup-revalidate.patch` 是上游式
+  `fuse_lookup_revalidate_{initialize,backing,finalize}` 实现（`fs/fuse/{backing.c,dir.c,fuse_i.h}`
+  + fuse selftest），`fusebpf-no-eexist.patch` 把 mknod/mkdir/link/symlink 的 `EEXIST` 归一化为
+  `ENOENT`（hidden 目录不再把"已存在"当成"创建失败"）。v3 让该修复**无条件生效**，运行时开关随之下线：
+  ReSukiSU-Ultra 侧（BakaSU 沿用）已同步删除 `CONFIG_KSU_FUSEBPF_FIX`、`CMD_FUSEBPF_SET`、`ksud fusebpf`
+  子命令与 `kernel-patches/fusebpf/`，因此内核侧不再需要任何兼容垫片；若换回仍引用旧符号的
+  KSU，`ci-integrate.sh` 会立即报错（否则内建 KSU 会在链接 vmlinux 时报 undefined symbol）。
+- **ADIOS 默认调度器与锁定**：只要编了 ADIOS（非 `--no-adios`），就注入
+  `elevator_get_default()` 并打开 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS`，**默认调度器恒为 adios**，
+  与 `adios_lock` 无关。`adios_lock` 只控制 `elevator_change()` 的运行时拦截：
+  `off`（默认）= 不拦截（澎湃OS4 的 `init.qti.kernel.rc` 每次开机写 `cpq` 会生效，调度器被切走）；
+  `cpq` = 拒绝切到 `cpq`；`all` = 拒绝任何非 adios 切换。工作流输入 `adios_lock`（`off`/`cpq`/`all`）。
 - **构建后强校验**：`kernel.release` 与 Image 里的版本串、`vmlinux` 里必须出现
-  `kernelsu_init`、`susfs is initialized`、`nm_rules` —— 防止“补丁打上了但没编译进去”。
+  `kernelsu_init`、`susfs is initialized` —— 防止“补丁打上了但没编译进去”。
+  NoMount 不是本仓库集成的，而是 BakaSU 的 `kernel/nomount/` 随 `kernelsu.o` 一起编进去的
+  （`kernel/Kbuild`，仅 4.9 - 6.12 生效），判据是 `vmlinux` 里 `strings` 得到
+  `NoMount: Loaded successfully`（`nm_info` 的 `KERN_INFO "NoMount: "` 前缀在编译期拼进
+  字面量）。BakaSU 版把入口改名为 `ksu_nomount_init` 并删掉了 `MODULE_*` / `module_init`，
+  所以老的 `nomount_init` 符号名与 `.modinfo` 里 `NoMount Path Redirection VFS Subsystem`
+  两条判据都已失效（`.modinfo` 段还会被 `COMMON_DISCARDS` 在链接 `vmlinux` 时丢弃）。
 - **产物**：`android15-6.6.<sub>-<snapshot>-AnyKernel3.zip`、裸 `Image-6.6.<sub>`、
   `build-info.txt`，合并发布到 `kernel-latest`（含管理器 APK）。
 
@@ -124,7 +151,8 @@ third_party/unicode_bypass/    Unicode 零宽字符绕过补丁 (迁移自老项
 
 ## 说明与边界
 
-- 仓库内的内核树是**纯 GKI**（不含 KSU/SUSFS/NoMount/ADIOS/Unicode 绕过）；root 与隐藏能力
+- 仓库内的内核树是**纯 GKI**（不含 KSU/SUSFS/ADIOS/Unicode 绕过；NoMount 由 KSU 内核
+  `kernel/nomount/` 自带，随 `CONFIG_KSU` 内建）；root 与隐藏能力
   由上面这套 Actions 工作流在构建时集成，本地构建（`scripts/build.sh`）默认仍是纯 GKI。
 - 不含任何编译产物（无 Image / boot.img / .o / .ko）
 - 部分 OEM-GKI 设备的 stock 内核带厂商私有补丁（例如某些机型的 f2fs hybrid-UFS / IOSTAT 等）。

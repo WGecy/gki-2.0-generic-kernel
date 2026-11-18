@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  GKI 2.0 内核集成脚本 —— ReSukiSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过
+#  GKI 2.0 内核集成脚本 —— BakaSU + SUSFS + ADIOS + Unicode 绕过
 # ----------------------------------------------------------------------------
 #  在 "$GKI_ROOT/common" (ACK 基线 + patches/*.patch 已 git am 到位的内核树) 之上:
-#    1. 集成 ReSukiSU-Ultra (KernelSU): drivers/kernelsu 符号链接 + Makefile/Kconfig
-#    2. 应用 KSU 的 fusebpf 内核侧补丁 (KSU_FUSEBPF_FIX 默认 y, 缺了会链接失败)
+#    1. 集成 BakaSU (KernelSU, 自带内核侧 NoMount): drivers/kernelsu 符号链接 + Makefile/Kconfig
+#    2. 应用 fusebpf 内核侧补丁 (v3 上游式 lookup revalidate + EEXIST 归一化,
+#       third_party/fusebpf; 修复无条件生效, KSU 侧已无运行时开关)
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
-#    4. 应用 NoMount (third_party/nomount: hook 补丁 + nomount.c/h 源码)
-#    5. 应用 ADIOS IO 调度器 (third_party/adios) + 强制默认 + 运行时拦截 cpq (elevator.c)
-#    6. 应用 Unicode 零宽字符绕过 (third_party/unicode_bypass)
-#    7. 写入 KSU / SUSFS / NoMount / ADIOS 的 defconfig 配置项
+#    4. 应用 ADIOS IO 调度器 (third_party/adios) 并强制其为默认调度器 (elevator_get_default());
+#       运行时切换拦截由 --adios-lock 决定: off(默认)=不拦截, cpq=只拦 cpq, all=只允许 adios
+#    5. 应用 Unicode 零宽字符绕过 (third_party/unicode_bypass)
+#    6. 写入 KSU / SUSFS / ADIOS / Unicode 的 defconfig 配置项
 #  脚本幂等: 重复执行只更新 KernelSU/SUSFS 源码, 已应用的补丁自动跳过。
+#
+#  关于 NoMount: 不要再单独集成。BakaSU 的 kernel/ 自带 nomount/
+#  (kernel/nomount/{nomount.c,nomount.h,nomount_api.h}, 由 kernel/Kbuild 在
+#  CONFIG_KSU=y 且内核 4.9 - 6.12 时编进 kernelsu.o), 而 drivers/kernelsu 是整目录
+#  软链接, 所以内建 KSU 一进来 NoMount 就已经在 vmlinux 里了。再往 fs/nomount/ 复制一份
+#  会重复注册 key type "nomount": fs_initcall 先占位后, KSU 侧 register_key_type 返回
+#  -EEXIST, dmesg 出现 "KernelSU: failed to init nomount: -17"。
 #
 #  用法:
 #    bash scripts/ci-integrate.sh --gki-root "$HOME/gki-kernel"
@@ -18,20 +26,25 @@
 #  选项:
 #    --gki-root DIR        GKI_ROOT (内含 common/), 默认 $GKI_ROOT 或 $HOME/gki-kernel
 #    --workspace DIR       本仓库根目录 (含 third_party/), 默认脚本所在目录的上一级
-#    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/ReSukiSU-Ultra
+#    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/BakaSU
 #    --ksu-branch BR       KernelSU 分支/标签, 默认 main
 #    --susfs-repo URL      SUSFS 仓库, 默认 https://gitlab.com/simonpunk/susfs4ksu.git
 #    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6
 #    --android-version V   默认 android15 (决定 SUSFS 补丁文件名)
 #    --kernel-version V    默认 6.6
-#    --no-fusebpf          跳过 KSU fusebpf 补丁 (同时关闭 CONFIG_KSU_FUSEBPF_FIX)
+#    --no-fusebpf          跳过 fusebpf 内核侧补丁 (third_party/fusebpf 的两个补丁)
+#                          注意: v3 补丁把该修复做成无条件生效, KSU 侧也已删掉
+#                          运行时开关 (KSU_FUSEBPF_FIX / fusebpf 子命令), 无需兼容垫片
 #    --no-susfs            跳过 SUSFS
-#    --no-nomount          跳过 NoMount
+#    --no-nomount          兼容旧用法, 现在什么都不做: NoMount 由 BakaSU 内核自带
+#                          (kernel/nomount/), 再去掉它要给 KSU 传 CONFIG_KSU_DISABLE_NOMOUNT
 #    --no-adios            跳过 ADIOS IO 调度器
-#    --adios-lock MODE     ADIOS 运行时切换拦截: off|cpq|all (默认 cpq)
+#    --adios-lock MODE     ADIOS 运行时切换拦截: off|cpq|all (默认 off)
+#                          注意: 只影响"拦截", 不影响默认调度器 —— 只要没加 --no-adios,
+#                          elevator_get_default() 都会被改成 adios
+#                          off = 不拦截 (init/服务可自由切换)
 #                          cpq = 只拒绝切到 cpq (澎湃OS4 的 init.qti 会写 cpq)
 #                          all = 任何非 adios 的切换请求都拒绝
-#                          off = 不拦截 (允许 init/服务自由切换)
 #    --no-unicode          跳过 Unicode 零宽字符绕过
 #    --allow-rej           允许存在 .rej (默认: 出现 .rej 即失败)
 #    -h | --help           显示帮助
@@ -44,7 +57,7 @@ GKI_ROOT="${GKI_ROOT:-$HOME/gki-kernel}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-KSU_REPO="https://github.com/WGecy/ReSukiSU-Ultra"
+KSU_REPO="https://github.com/WGecy/BakaSU"
 KSU_BRANCH="main"
 SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
 SUSFS_BRANCH="gki-android15-6.6"
@@ -52,9 +65,8 @@ ANDROID_VERSION="android15"
 KERNEL_VERSION="6.6"
 ENABLE_FUSEBPF=1
 ENABLE_SUSFS=1
-ENABLE_NOMOUNT=1
 ENABLE_ADIOS=1
-ADIOS_LOCK="cpq"
+ADIOS_LOCK="off"
 ENABLE_UNICODE=1
 ALLOW_REJ=0
 
@@ -77,7 +89,7 @@ while [ $# -gt 0 ]; do
     --kernel-version)  KERNEL_VERSION="${2:?}"; shift 2 ;;
     --no-fusebpf)      ENABLE_FUSEBPF=0; shift ;;
     --no-susfs)        ENABLE_SUSFS=0; shift ;;
-    --no-nomount)      ENABLE_NOMOUNT=0; shift ;;
+    --no-nomount)      warn "--no-nomount: 已无意义 (NoMount 随 BakaSU 内核自带), 忽略"; shift ;;
     --no-adios)        ENABLE_ADIOS=0; shift ;;
     --adios-lock)      ADIOS_LOCK="${2:?}"; shift 2 ;;
     --adios-lock=*)    ADIOS_LOCK="${1#*=}"; shift ;;
@@ -95,9 +107,8 @@ COMMON="$GKI_ROOT/common"
 log "GKI_ROOT   : $GKI_ROOT"
 log "工作区     : $WORKSPACE"
 log "KernelSU   : $KSU_REPO @ $KSU_BRANCH"
-[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : KSU kernel-patches (KSU_FUSEBPF_FIX 依赖)"
+[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf v3 (无条件生效, KSU 侧无开关)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_BRANCH"
-[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount    : $WORKSPACE/third_party/nomount"
 
 # ============================================================================
 #  通用小工具
@@ -210,10 +221,10 @@ apply_patch_file() {  # apply_patch_file FILE DESC  (返回非 0 表示有 hunk 
 }
 
 # ============================================================================
-#  1. ReSukiSU-Ultra (KernelSU) 集成
+#  1. BakaSU (KernelSU) 集成
 # ============================================================================
 stage_ksu() {
-  log "=========== [1/7] 集成 ReSukiSU-Ultra (KernelSU) ==========="
+  log "=========== [1/6] 集成 BakaSU (KernelSU) ==========="
   local ksu_dir="$GKI_ROOT/KernelSU"
   local drivers="$COMMON/drivers"
 
@@ -246,20 +257,56 @@ stage_ksu() {
     printf 'source "drivers/kernelsu/Kconfig"\n' | insert_before_last_endmenu "$drivers/Kconfig"
     ok "drivers/Kconfig: 已 source drivers/kernelsu/Kconfig"
   fi
+  # NoMount 不是单独集成项: 它在 kernel/nomount/ 里, 由 kernel/Kbuild 编进 kernelsu.o,
+  # 而上面整目录软链接已经把整个 kernel/ 搬进 drivers/kernelsu/, 所以它自动就在树里。
+  if [ -f "$ksu_dir/kernel/nomount/nomount.c" ] && \
+     grep -qF 'nomount/nomount.o' "$ksu_dir/kernel/Kbuild"; then
+    ok "NoMount 随 KSU 内建 (kernel/nomount/, 由 kernel/Kbuild 编进 kernelsu.o, 无需单独集成)"
+  else
+    warn "当前 KSU 分支没有内置 NoMount (缺 kernel/nomount/ 或 Kbuild 未引用): 内核将不带 NoMount"
+  fi
   ok "KernelSU 内建集成完成 (drivers/kernelsu -> $ksu_dir/kernel)"
 }
 
 # ============================================================================
-#  2. KSU fusebpf 内核侧补丁 (CONFIG_KSU_FUSEBPF_FIX 默认 y, 缺了链接会失败)
+#  2. fusebpf 内核侧补丁 (third_party/fusebpf, v3 上游式实现)
 # ============================================================================
+check_ksu_fusebpf_symbols() {
+  # v3 之后内核侧不再提供 fuse_bpf_lookup_revalidate_{enabled,set}。BakaSU 侧
+  # 也已同步删掉这两个 extern 与整套运行时开关 (KSU_FUSEBPF_FIX / CMD_FUSEBPF_SET /
+  # ksud 的 fusebpf 子命令)。若 clone 到的 KSU 仍引用它们, 内建 KSU 会在链接 vmlinux
+  # 时报 undefined symbol (历史教训: run 35693420939) —— 这里提前失败, 不等到链接阶段。
+  local ksu_kernel="$GKI_ROOT/KernelSU/kernel"
+  [ -d "$ksu_kernel" ] || return 0
+  if grep -rqF --include='*.c' \
+       -e 'fuse_bpf_lookup_revalidate_set' \
+       -e 'fuse_bpf_lookup_revalidate_enabled' "$ksu_kernel"; then
+    die "KSU 源码仍引用 fuse_bpf_lookup_revalidate_{enabled,set} (v3 内核侧补丁已不提供): 请把 $KSU_REPO@$KSU_BRANCH 换到已移除运行时开关的版本"
+  fi
+  ok "KSU 侧已无 fusebpf 运行时开关引用 (不需要兼容垫片)"
+}
+
 stage_fusebpf() {
-  log "=========== [2/7] 应用 KSU fusebpf 内核侧补丁 ==========="
-  # 老项目 apply_fusebpf(): 优先用 KSU 仓库自带的 kernel-patches/fusebpf, 本地 third_party 兜底
-  local ksu_src="$GKI_ROOT/KernelSU/kernel-patches/fusebpf"
-  local local_src="$WORKSPACE/third_party/fusebpf"
-  local src="$ksu_src"
-  [ -d "$ksu_src" ] || src="$local_src"
+  log "=========== [2/6] 应用 fusebpf 内核侧补丁 (v3) ==========="
+  # 补丁只来自本仓库 third_party/fusebpf (KSU 仓库的 kernel-patches/fusebpf 已随开关下线删除)
+  local src="$WORKSPACE/third_party/fusebpf"
+  local patch="$src/fusebpf-lookup-revalidate.patch"
+  [ -f "$patch" ] || die "fusebpf 补丁缺失: $patch"
   log "补丁来源: $src"
+
+  # 旧实现 (v1: fuse_bpf_lookup_revalidate_enabled 开关 + struct fuse_lookup_io) 与 v3 不兼容,
+  # 明确失败而不是静默用错版本。
+  grep -qF 'struct fuse_lookup_revalidate_io' "$patch" 2>/dev/null \
+    || die "fusebpf 补丁集过旧: $patch 不是 v3 实现 (期望含 struct fuse_lookup_revalidate_io)"
+
+  # 内核树里若已打过 v1 (例如本地树曾用过 KSU kernel-patches 的旧补丁), v3 会大面积冲突:
+  # 提前给出可执行的指引, 不留下满树 .rej。
+  if grep -qF 'FUSEBPF 直通修复运行时开关' "$COMMON/fs/fuse/backing.c" 2>/dev/null; then
+    die "fs/fuse/backing.c 里是 fusebpf v1 (开关式) 实现, 与 v3 不兼容: 请还原该文件或重新准备内核树"
+  fi
+
+  # KSU 侧必须先于内核侧更新 (两边都引用/提供同一组符号)
+  check_ksu_fusebpf_symbols
 
   local name
   for name in fusebpf-lookup-revalidate.patch fusebpf-no-eexist.patch; do
@@ -267,17 +314,26 @@ stage_fusebpf() {
     apply_patch_file "$src/$name" "fusebpf: $name" || true
   done
 
-  # 校验内核侧符号: KSU 的 fusebpf_fix_* / ksu_handle_susfs_cmd 直接引用它们
-  verify_marker fs/fuse/backing.c 'fuse_bpf_lookup_revalidate_enabled' 'fusebpf 运行时开关变量'
-  verify_marker fs/fuse/backing.c 'fuse_bpf_lookup_revalidate_set' 'fusebpf 开关设置函数'
-  ok "fusebpf 集成完成"
+  # 校验 v3 落点: backing.c 三个 stage + dir.c 挂载点 + fuse_i.h 的 io 结构
+  verify_marker fs/fuse/backing.c 'fuse_lookup_revalidate_initialize' 'fusebpf v3 initialize stage'
+  verify_marker fs/fuse/backing.c 'fuse_lookup_revalidate_backing' 'fusebpf v3 backing stage'
+  verify_marker fs/fuse/backing.c 'fuse_lookup_revalidate_finalize' 'fusebpf v3 finalize stage'
+  verify_marker fs/fuse/dir.c 'fuse_bpf_backing(parent_inode,' 'fusebpf v3 revalidate 挂载点 (dir.c)'
+  verify_marker fs/fuse/fuse_i.h 'struct fuse_lookup_revalidate_io' 'fusebpf v3 io 结构'
+  # EEXIST → ENOENT 归一化 (no-eexist 补丁) 必须 4 处都在 (mknod/mkdir/link/symlink)
+  local eexist
+  eexist="$(grep -c 'if (err == -EEXIST)' "$COMMON/fs/fuse/backing.c" || true)"
+  [ "$eexist" -ge 4 ] \
+    || die "fusebpf no-eexist 补丁未生效: fs/fuse/backing.c 只有 $eexist 处 EEXIST 归一化 (期望 4)"
+  ok "fusebpf v3 落点校验通过 (3 个 stage + dir.c 挂载点 + ${eexist} 处 EEXIST 归一化)"
+  ok "fusebpf 集成完成 (修复无条件生效, 无运行时开关)"
 }
 
 # ============================================================================
 #  3. SUSFS (gitlab simonpunk 上游)
 # ============================================================================
 stage_susfs() {
-  log "=========== [3/7] 应用 SUSFS 补丁 ==========="
+  log "=========== [3/6] 应用 SUSFS 补丁 ==========="
   local susfs_dir="$GKI_ROOT/susfs4ksu"
   local patch_name="50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"
 
@@ -347,62 +403,13 @@ stage_susfs() {
 }
 
 # ============================================================================
-#  3. NoMount (third_party/nomount)
-# ============================================================================
-stage_nomount() {
-  log "=========== [4/7] 应用 NoMount 补丁 ==========="
-  local src="$WORKSPACE/third_party/nomount"
-  local patch="$src/nomount-6.6.patch"
-  [ -d "$src" ] || die "NoMount 资产缺失: $src"
-  [ -f "$patch" ] || die "NoMount hook 补丁缺失: $patch"
-
-  apply_patch_file "$patch" "NoMount hook 补丁" || true
-
-  # 补丁不含源码: nomount.c 用 #include "nomount.h" (相对路径), 头文件另放 include/linux
-  cp -f "$src/nomount.c" "$COMMON/fs/nomount.c"
-  cp -f "$src/nomount.h" "$COMMON/fs/nomount.h"
-  cp -f "$src/nomount.h" "$COMMON/include/linux/nomount.h"
-  ok "NoMount 源码已就位 (fs/nomount.c + fs/nomount.h + include/linux/nomount.h)"
-
-  # 兜底修复: SUSFS 与 NoMount 都要往 fs/Makefile 同一处插一行, 模糊匹配可能漏掉
-  local mk="$COMMON/fs/Makefile"
-  if ! grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount.o' "$mk"; then
-    warn "fs/Makefile 未包含 NOMOUNT 目标, 手工补齐"
-    printf '\nobj-$(CONFIG_NOMOUNT) += nomount.o\n' >> "$mk"
-  fi
-  local fs_kconfig="$COMMON/fs/Kconfig"
-  if ! grep -qF 'config NOMOUNT' "$fs_kconfig"; then
-    warn "fs/Kconfig 未包含 config NOMOUNT, 手工补齐"
-    insert_before_last_endmenu "$fs_kconfig" <<'EOF'
-config NOMOUNT
-	bool "NoMount Path Redirection Subsystem"
-	default y
-	help
-	  NoMount allows path redirection and virtual file injection
-	  without mounting filesystems. Useful for systemless modifications.
-EOF
-  fi
-
-  verify_marker fs/namei.c 'nomount_handle_getname' 'NoMount getname hook'
-  verify_marker fs/namei.c 'nomount_handle_permission' 'NoMount permission hook'
-  verify_marker fs/d_path.c 'nomount_handle_dpath' 'NoMount d_path hook'
-  verify_marker fs/stat.c 'nomount_handle_getattr' 'NoMount getattr hook'
-  verify_marker fs/readdir.c 'nomount_handle_iterate_dir' 'NoMount readdir hook'
-  verify_marker fs/proc/task_mmu.c 'nomount_spoof_mmap_metadata' 'NoMount mmap 元数据伪装'
-  verify_marker fs/statfs.c 'nomount_spoof_statfs' 'NoMount statfs 伪装'
-  verify_marker fs/Makefile 'obj-$(CONFIG_NOMOUNT) += nomount.o' 'NoMount 编译目标'
-  verify_marker fs/Kconfig 'config NOMOUNT' 'NoMount Kconfig'
-  ok "NoMount 集成完成"
-}
-
-# ============================================================================
-#  5. ADIOS IO 调度器 (third_party/adios, 迁移自老项目 features.adios)
+#  4. ADIOS IO 调度器 (third_party/adios, 迁移自老项目 features.adios)
 # ============================================================================
 inject_adios_default() {
   # elevator_get_default() 里 mq-deadline 是硬编码兜底; 老项目用同样的 #ifdef 注入改成 adios
   local ev="$COMMON/block/elevator.c"
   [ -f "$ev" ] || die "block/elevator.c 不存在"
-  if grep -qF 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS' "$ev"; then
+  if grep -qF 'GKI-ADIOS-DEFAULT-BEGIN' "$ev"; then
     ok "block/elevator.c: ADIOS 默认调度器注入已存在 (幂等)"
     return 0
   fi
@@ -411,11 +418,13 @@ inject_adios_default() {
   if ! awk '
     /^static struct elevator_type \*elevator_get_default\(struct request_queue \*q\)/ { in_func = 1 }
     in_func && !done && /^[[:space:]]*return elevator_find_get\(q, "mq-deadline"\);/ {
+      print "\t/* GKI-ADIOS-DEFAULT-BEGIN: 强制默认调度器为 adios */"
       print "#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS"
       print "\treturn elevator_find_get(q, \"adios\");"
       print "#else"
       print $0
       print "#endif"
+      print "\t/* GKI-ADIOS-DEFAULT-END */"
       done = 1
       next
     }
@@ -493,7 +502,7 @@ inject_adios_lock() {  # inject_adios_lock MODE(off|cpq|all)
 }
 
 stage_adios() {
-  log "=========== [5/7] 应用 ADIOS IO 调度器 ==========="
+  log "=========== [4/6] 应用 ADIOS IO 调度器 ==========="
   local src="$WORKSPACE/third_party/adios"
   local patch="$src/14-adios.patch"
   [ -f "$patch" ] || die "ADIOS 补丁缺失: $patch"
@@ -505,19 +514,25 @@ stage_adios() {
   verify_marker block/Kconfig.iosched 'config MQ_IOSCHED_DEFAULT_ADIOS' 'ADIOS 默认调度器 Kconfig'
   verify_marker block/Makefile 'adios.o' 'ADIOS 编译目标'
 
+  # 默认调度器: 只要编了 ADIOS 就强制为 adios (与 --adios-lock 无关)
   inject_adios_default
+  verify_marker block/elevator.c 'GKI-ADIOS-DEFAULT-END' 'ADIOS 默认调度器注入'
+
+  # 运行时拦截只由 --adios-lock 决定; off 时 strip 掉上一次可能残留的拦截块
   inject_adios_lock "$ADIOS_LOCK"
-  if [ "$ADIOS_LOCK" != "off" ]; then
+  if [ "$ADIOS_LOCK" = "off" ]; then
+    ok "ADIOS 集成完成 (默认调度器=adios; 未拦截切换; 模式=off)"
+  else
     verify_marker block/elevator.c 'GKI-ADIOS-LOCK-END' 'ADIOS 运行时切换拦截 (锁定)'
+    ok "ADIOS 集成完成 (默认调度器=adios + 锁定模式=$ADIOS_LOCK)"
   fi
-  ok "ADIOS 集成完成 (默认调度器 + 锁定模式=$ADIOS_LOCK)"
 }
 
 # ============================================================================
-#  6. Unicode 零宽字符绕过 (third_party/unicode_bypass, 迁移自老项目 features.unicode_bypass)
+#  5. Unicode 零宽字符绕过 (third_party/unicode_bypass, 迁移自老项目 features.unicode_bypass)
 # ============================================================================
 stage_unicode_bypass() {
-  log "========== [6/7] 应用 Unicode 零宽字符绕过 ==========="
+  log "========== [5/6] 应用 Unicode 零宽字符绕过 ==========="
   local src="$WORKSPACE/third_party/unicode_bypass"
   local patch="$src/unicode_bypass_fix_6.1+.patch"
   [ -f "$patch" ] || die "Unicode 绕过补丁缺失: $patch"
@@ -536,26 +551,26 @@ stage_unicode_bypass() {
 }
 
 # ============================================================================
-#  7. defconfig 配置项
+#  6. defconfig 配置项
 # ============================================================================
 stage_defconfig() {
-  log "=========== [7/7] 写入 defconfig (KSU / fusebpf / SUSFS / NoMount / ADIOS / Unicode) ==========="
+  log "=========== [6/6] 写入 defconfig (KSU / fusebpf / SUSFS / ADIOS / Unicode) ==========="
   local defconfig="$COMMON/arch/arm64/configs/gki_defconfig"
   [ -f "$defconfig" ] || die "defconfig 不存在: $defconfig"
 
-  # KernelSU: 内建 (y) — 钩子方式由 ReSukiSU Kconfig 的 choice 默认值决定
+  # KernelSU: 内建 (y) — 钩子方式由 BakaSU Kconfig 的 choice 默认值决定
   # (GKI2 走 tracepoint syscall redirect, 无需手工 hook 源码补丁)
   enable_config "$defconfig" 'CONFIG_KSU=y'
-  enable_config "$defconfig" 'CONFIG_KSU_NETISOLATE=y'
-  enable_config "$defconfig" 'CONFIG_NOMOUNT=y'
+  # 注意: 不写 CONFIG_KSU_NETISOLATE —— BakaSU (WGecy/BakaSU) 的 kernel/ 里没有
+  # netisolate 子模块 (那是 BakaSU-Ultra 独有的), Kconfig 里也没有该符号; 写进去只会被
+  # make gki_defconfig 静默丢弃, 反而让人误以为联网隔离已编进内核。
+  #
+  # 注意: 不写 CONFIG_NOMOUNT —— 该符号已不存在。NoMount 由 BakaSU 的 kernel/nomount/
+  # 随 kernelsu.o 一起编进 vmlinux (kernel/Kbuild), 只受 CONFIG_KSU 与
+  # CONFIG_KSU_DISABLE_NOMOUNT 控制; 这里再写 CONFIG_NOMOUNT=y 只会被 Kconfig 静默丢弃。
 
-  # fusebpf: 该选项默认 y 且引用内核侧 fuse_bpf_lookup_revalidate_* 符号,
-  # 必须与上面的 fusebpf 补丁保持一致 (--no-fusebpf 时必须显式关闭, 否则链接失败)
-  if [ "$ENABLE_FUSEBPF" = 1 ]; then
-    enable_config "$defconfig" 'CONFIG_KSU_FUSEBPF_FIX=y'
-  else
-    disable_config "$defconfig" 'CONFIG_KSU_FUSEBPF_FIX'
-  fi
+  # fusebpf: KSU 侧已无 KSU_FUSEBPF_FIX 配置项/运行时开关 (v3 内核侧补丁无条件生效),
+  # 因此这里没有配置要写; --no-fusebpf 只表示"不应用 third_party/fusebpf 的两个补丁"。
 
   if [ "$ENABLE_SUSFS" = 1 ]; then
     local c
@@ -573,7 +588,8 @@ stage_defconfig() {
     done
   fi
 
-  # ADIOS IO 调度器: 必须 =y 才能满足 MQ_IOSCHED_DEFAULT_ADIOS 的 depends on ...=y
+  # ADIOS IO 调度器: 两项都 =y —— 不论 --adios-lock 取值, 内核默认调度器都是 adios
+  # (后者 depends on MQ_IOSCHED_ADIOS=y, 必须同时打开); 拦截与否只由 -LOCK- 注入决定
   if [ "$ENABLE_ADIOS" = 1 ]; then
     enable_config "$defconfig" 'CONFIG_MQ_IOSCHED_ADIOS=y'
     enable_config "$defconfig" 'CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y'
@@ -596,10 +612,22 @@ stage_defconfig() {
     echo "SUSFS_REPO=$SUSFS_REPO"
     echo "SUSFS_BRANCH=$SUSFS_BRANCH"
     echo "SUSFS_COMMIT=${SUSFS_COMMIT:-disabled}"
-    echo "NOMOUNT=$([ "$ENABLE_NOMOUNT" = 1 ] && echo enabled || echo disabled)"
-    echo "NOMOUNT_SHA256=$(sha256sum "$WORKSPACE/third_party/nomount/nomount.c" | cut -d' ' -f1)"
+    # NoMount 由 BakaSU 内核自带 (kernel/nomount/), 没有独立开关; 这里记录它是否真的
+    # 进了树, 便于 release notes 与排障 (drivers/kernelsu -> BakaSU/kernel 的整目录软链接)
+    if [ -f "$COMMON/drivers/kernelsu/nomount/nomount.c" ]; then
+      echo "NOMOUNT=builtin"
+      # nomount.h: #define NOMOUNT_BASE_VERSION "22" -> 22
+      echo "NOMOUNT_VERSION=$(grep -m1 '^#define NOMOUNT_BASE_VERSION' \
+        "$COMMON/drivers/kernelsu/nomount/nomount.h" | tr -d '"' | awk '{print $3}')"
+      echo "NOMOUNT_SHA256=$(sha256sum "$COMMON/drivers/kernelsu/nomount/nomount.c" | cut -d' ' -f1)"
+    else
+      echo "NOMOUNT=missing"
+      echo "NOMOUNT_VERSION=missing"
+      echo "NOMOUNT_SHA256=missing"
+    fi
     echo "ADIOS=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
     echo "ADIOS_LOCK=$([ "$ENABLE_ADIOS" = 1 ] && echo "$ADIOS_LOCK" || echo n/a)"
+    echo "ADIOS_DEFAULT=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
     echo "UNICODE_BYPASS=$([ "$ENABLE_UNICODE" = 1 ] && echo enabled || echo disabled)"
   } > "$GKI_ROOT/ci-build-info.env"
   ok "构建信息已写入: $GKI_ROOT/ci-build-info.env"
@@ -614,7 +642,6 @@ SUSFS_COMMIT=""
 stage_ksu
 [ "$ENABLE_FUSEBPF" = 1 ] && stage_fusebpf
 [ "$ENABLE_SUSFS" = 1 ]   && stage_susfs
-[ "$ENABLE_NOMOUNT" = 1 ] && stage_nomount
 [ "$ENABLE_ADIOS" = 1 ]   && stage_adios
 [ "$ENABLE_UNICODE" = 1 ] && stage_unicode_bypass
 stage_defconfig
@@ -634,11 +661,11 @@ fi
 
 log "================ 集成摘要 ================"
 log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
-[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : KSU kernel-patches (已应用, KSU_FUSEBPF_FIX=y)"
+[ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf v3 (已应用, 无条件生效; KSU 侧无开关/垫片)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
-[ "$ENABLE_NOMOUNT" = 1 ] && log "NoMount  : third_party/nomount (hook 补丁 + 源码)"
-[ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (调度器 + 默认调度器注入 + 锁定=$ADIOS_LOCK)"
+log "NoMount  : 由 BakaSU kernel/nomount/ 自带 (随 CONFIG_KSU 内建, 无需单独集成)"
+[ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (默认调度器=adios, 锁定=$ADIOS_LOCK)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过)"
 log "内核树改动: $(git -C "$COMMON" status --porcelain | wc -l) 个文件"
 log "========================================="
-ok "ReSukiSU-Ultra + SUSFS + NoMount + ADIOS + Unicode 绕过 集成完成"
+ok "BakaSU (含内置 NoMount) + SUSFS + ADIOS + Unicode 绕过 集成完成"

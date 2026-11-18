@@ -3,9 +3,9 @@
 | | 老项目 | 新项目 |
 | --- | --- | --- |
 | 仓库 | `ReSukiSU-Ultra-Kernel` | `gki-2.0-generic-kernel`（本仓库） |
-| 基线 | ACK `android15-6.6` 两个分支：`2015-03`(6.6.77) / `2026-01`(6.6.118)，repo manifest | ACK `android15-6.6` tip 单一 commit `448c3033`(6.6.142) + `patches/` 83 个补丁 → **6.6.158** |
-| 构建 | kleaf/bazel（`--config=fast --lto=thin --defconfig_fragment`），产物 dist（含模块） | plain make + AOSP clang-r510928 + AutoFDO（与 `scripts/build.sh` 一致），产物 `Image` |
-| 集成入口 | `build.py`（10 步）+ `patches.py` + `config.yaml` 开关 + `build.yml` | `scripts/ci-integrate.sh`（7 个 stage）+ `.github/workflows/build.yml` |
+| 基线 | ACK `android15-6.6` 两个分支：`2015-03`(6.6.77) / `2026-01`(6.6.118)，repo manifest | ACK `android15-6.6` tip 单一 commit `448c3033`(6.6.142) + `patches/` 84 个补丁 → **6.6.158** |
+| 构建 | kleaf/bazel（`--config=fast --lto=thin --defconfig_fragment`），产物 dist（含模块） | plain make + clang 19 + lld 19 + AutoFDO（与 `scripts/build.sh` 一致），产物 `Image` |
+| 集成入口 | `build.py`（10 步）+ `patches.py` + `config.yaml` 开关 + `build.yml` | `scripts/ci-integrate.sh`（6 个 stage）+ `.github/workflows/build.yml` |
 | 打包 | AnyKernel3 + 管理器 APK → `kernel-latest` Release | 同（AnyKernel3 已迁移），另附裸 `Image` 与 `build-info.txt` |
 
 状态图例：✅ 已迁移 · ➖ 基线/上游已内置（无需迁移）· ❌ 未迁移 · ⛔ 不适用（构建体系不同）
@@ -15,9 +15,9 @@
 | 功能 | 老项目实现 | 新项目实现 | 状态 |
 | --- | --- | --- | --- |
 | ReSukiSU-Ultra (KernelSU) | `build.py step05c` + `third_party/ksu/setup-local.sh`（drivers/kernelsu 软链 + Makefile/Kconfig） | `ci-integrate.sh stage_ksu()`：同样软链 + `obj-$(CONFIG_KSU)`，走 KSU 仓库 `kernel/Kbuild` 内建 | ✅ |
-| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（优先 KSU `kernel-patches/fusebpf`，回退 `third_party/fusebpf`） | `stage_fusebpf()` + `third_party/fusebpf/`（与 KSU 仓库逐字节一致），并校验符号 | ✅ |
+| fusebpf 内核侧补丁 | `patches.py apply_fusebpf()`（KSU `kernel-patches/fusebpf`，运行时可开关） | `stage_fusebpf()` + `third_party/fusebpf/`：**v3 上游式 lookup revalidate**（`fuse_lookup_revalidate_{initialize,backing,finalize}` + `struct fuse_lookup_revalidate_io` + selftest）+ `EEXIST→ENOENT` 归一化；KSU 侧运行时开关/补丁副本已删除，脚本校验 v3 落点并在 KSU 仍引用旧符号时立即失败 | ✅ 2026-10-02 升级 v3 |
 | SUSFS | `build.py step05e`（gitlab 上游 50_add_susfs + 源码拷贝 + 6.6 上下文修复） | `stage_susfs()`（同源同流程，含 `dma-buf.h`/`susfs_def.h` 修复与 sucompat 硬校验） | ✅ |
-| NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | `stage_nomount()` + `third_party/nomount/`（含 `fs/Makefile`、`fs/Kconfig` 兜底修复） | ✅ |
+| NoMount | `patches.py apply_nomount()`（hook 补丁 + `nomount.c/h`） | **不集成**：BakaSU 的 `kernel/nomount/`（`nomount.c`/`nomount.h`/`nomount_api.h`）由 `kernel/Kbuild` 在 `CONFIG_KSU=y` 且内核 4.9 - 6.12 时编进 `kernelsu-objs`，而 `drivers/kernelsu` 是整目录软链接，NoMount 随之进入 `vmlinux`；曾经的 `stage_nomount()` + `third_party/nomount/`（上游 v2.2.0 复制到 `fs/nomount/`）会重复 `register_key_type(&nm_key_type)`，后注册者拿到 `-EEXIST`（`KernelSU: failed to init nomount: -17`），2026-11 已移除。要关掉用 `CONFIG_KSU_DISABLE_NOMOUNT=y` | ➖ 随 KSU 内建 |
 | 管理器 APK 发布 | `.github/workflows/get-manager.yml` | 同名工作流迁移 | ✅ |
 | 管理器签名（`manager_sign.h`/`apk_sign.c`） | `build.py step07` 注入 `RESUKISU_ULTRA` 签名 | ReSukiSU 仓库已内置 `RESUKISU_ULTRA`（pengzenzen-creator）与 `RESUKISU_ULTRA_CUSTOM`（WGecy release-key） | ➖ |
 | KSU seccomp `PF_EXITING` 防死机（6.6.118+） | `build.py step05d`（改 `KERNEL_VERSION(6,11,0)`） | ReSukiSU `policy/app_profile.c` 已自带 `>= 6.6.118` 版本分支 | ➖ |
@@ -34,8 +34,9 @@
 
 | 功能 | 老项目实现 | 新项目实现 | 状态 |
 | --- | --- | --- | --- |
-| ADIOS IO 调度器 + 强制默认 | `patches/04-block-io/14-adios.patch` + `build.py step06b`（defconfig）+ `build.py step07`/`build.yml` 的 `elevator.c` 拦截 | `third_party/adios/14-adios.patch` + `stage_adios()`（应用补丁 + `elevator_get_default()` 注入 + `CONFIG_MQ_IOSCHED_ADIOS=y` / `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`） | ✅ 2026-09-22 迁移 |
-| └ ADIOS **运行时禁止切换调度器**（"防 init.qti 切 cpq"） | 老项目仅 `fastbuild.yml` 有（锚点是 5.x 风格，6.6 命中不了）；`build.py` 896 行注明「elevator_switch: 拦截已禁用（2026-08-18，管理器 IO 调度器切换功能需要自由切换）」 | `inject_adios_lock()`：在 6.6 的 `elevator_change()` 内注入拦截；`--adios-lock=cpq`（默认）/`all`/`off`，工作流输入 `adios_lock` | ✅ 2026-09-22 迁移（默认只拦 cpq） |
+| ADIOS IO 调度器 | `patches/04-block-io/14-adios.patch` + `build.py step06b`（defconfig）+ `build.py step07`/`build.yml` 的 `elevator.c` 拦截 | `third_party/adios/14-adios.patch` + `stage_adios()`（应用补丁 + 注入 `elevator_get_default()` + `CONFIG_MQ_IOSCHED_ADIOS=y` / `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y`） | ✅ 2026-09-22 迁移 |
+| └ ADIOS **强制默认调度器** | 老项目无条件注入 `elevator_get_default()` | 同样无条件注入，默认调度器恒为 `adios`（与 `adios_lock` 无关，只有 `--no-adios` 才不编） | ✅ 2026-10-29 明确语义 |
+| └ ADIOS **运行时禁止切换调度器**（"防 init.qti 切 cpq"） | 老项目仅 `fastbuild.yml` 有（锚点是 5.x 风格，6.6 命中不了）；`build.py` 896 行注明「elevator_switch: 拦截已禁用（2026-08-18，管理器 IO 调度器切换功能需要自由切换）」 | `inject_adios_lock()`：在 6.6 的 `elevator_change()` 内注入拦截；`--adios-lock=off`（默认，不拦）/`cpq`/`all`，工作流输入 `adios_lock` | ✅ 2026-09-22 迁移（2026-10-29 默认改 off） |
 | SSG IO 调度器（三星） | `patches/04-block-io/15-ssg.patch` + `CONFIG_MQ_IOSCHED_SSG=y` | — | ❌ |
 | UFS fastdiscard | `patches/04-block-io/07-ufs-fastdiscard.patch` | — | ❌ |
 | zstd 1.5.7（压缩级别可调） | `patches/04-block-io/zstd-1.5.7.patch` | — | ❌ |
@@ -48,7 +49,7 @@
 | --- | --- | --- | --- |
 | BBRv3（17 算法全开 + 默认 bbr3） | `patches/05-net/06-bbrv3.patch` + defconfig | 仅上游 `CONFIG_TCP_CONG_BBR=y` | ❌ |
 | ipset 全家桶（代理分流/防火墙） | `patches.py apply_ipset()`（`CONFIG_IP_SET*` + `NETFILTER_XT_SET`） | — | ❌ |
-| KSU 网络隔离 | 老项目无 | `CONFIG_KSU_NETISOLATE=y`（ReSukiSU 自带） | ✅ 新项目独有 |
+| KSU 网络隔离 | 老项目无 | `CONFIG_KSU_NETISOLATE=y`（ReSukiSU 自带） | ⚠️ 已去掉：WGecy/BakaSU 不再是 ReSukiSU 分支，kernel/ 里没有 netisolate 子模块，`ci-integrate.sh` 不再写该符号 |
 
 ## 5. 内存 / 性能 / 温控
 
@@ -61,7 +62,7 @@
 | VM 默认值（watermark=30/swappiness=100）+ `tesla_vm_opt` | `patches/06-tune/vm-defaults.patch` + `third_party/vm-opt/tesla_vm_opt.c`（`build.py step07` 注入 mm/） | — | ❌ |
 | 温控偏移（游戏防降频，默认 3°C） | `patches/08-thermal/thermal-offset.patch` | — | ❌ |
 | cpuidle/cpufreq 优化 | `patches/07-drivers/09-cpuidle.patch` | — | ❌ |
-| Unicode 零宽字符绕过 | `patches/09-android/unicode_bypass_fix_6.1+.patch`（`patches.py apply_unicode_bypass`） | `third_party/unicode_bypass/unicode_bypass_fix_6.1+.patch` + `stage_unicode_bypass()`（改 `fs/unicode` 归一化数据表 + 校验 `utf8data[64080]`） | ✅ 2026-09-22 迁移 |
+| Unicode 零宽字符绕过 | `patches/09-android/unicode_bypass_fix_6.1+.patch`（`patches.py apply_unicode_bypass`） | `third_party/unicode_bypass/unicode_bypass_fix_6.1+.patch` + `stage_unicode_bypass()`（改 `fs/unicode` 归一化数据表 + 校验 `utf8data[64080]`）；补丁于 2026-10-02 重新生成（补 `index` 行 / 带函数名上下文） | ✅ 2026-09-22 迁移 |
 | BBG 防格机 | `third_party/kernel_patches/common/bbg`（老项目 `features.bbg: false`） | — | ⛔（老项目亦关闭） |
 
 ## 6. OEM / vendor 兼容（按机型，非通用功能）
@@ -81,7 +82,7 @@
 | ABI 并集、LTS 合并（`build.py step04.6`）、ACK tag 自动升级（`step04.5`） | 精确 commit 锁定基线（`data/android15/6.6.json`），无这些步骤 | ⛔ |
 | `setlocalversion` 去 `-dirty` | `LOCALVERSION=` + `LOCALVERSION_AUTO=n`（`patches/0002`）已保证版本串干净 | ✅ |
 | 构建时间戳（`init/Makefile` 注入） | `KBUILD_BUILD_TIMESTAMP`（`build_time` 输入） | ✅ |
-| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION` | ✅ |
+| 自定义内核名（`android15-8-gHASH-abBID`） | `custom_suffix` 输入 → `LOCALVERSION`（与 `-4k` 同段，拼在 `CONFIG_LOCALVERSION="-android15-8"` **之后**：`-test-01` → `6.6.158-android15-8-test-01-4k`，留空取默认 `-WGecy` → `6.6.158-android15-8-WGecy-4k`；要换整段 KMI 串得改 `gki_defconfig`） | ✅ |
 | `fastbuild.yml`（make + ccache-ECS 快速构建） | 未迁移（主流程走 Actions；工具链有 Actions 缓存） | ❌（可选） |
 | 两个基线 6.6.77 / 6.6.118 | 单基线 6.6.158 | 差异（非缺失） |
 
@@ -109,7 +110,13 @@
 ## 10. 已知基线相关注意事项
 
 - 老项目补丁多数针对 **6.6.77 / 6.6.118 / 6.6.142** 生成，迁到 6.6.158 必须逐个验证；
-  已验证可干净应用：`adios`、`unicode_bypass`、`fusebpf`、`nomount`、SUSFS 上游补丁。
+  已验证可干净应用：`adios`、`unicode_bypass`、`fusebpf`、SUSFS 上游补丁（`nomount` 已不再
+  单独应用，改由 BakaSU 内核自带）。
+- **2026-10-02 复验**：`third_party/fusebpf/`（v3）与 `third_party/unicode_bypass/` 的补丁
+  在「基线 `448c3033` + `patches/` 全部 84 个」的内核树上 `git apply` 干净通过
+  （`fs/fuse/{backing.c,dir.c,fuse_i.h}` + `tools/testing/selftests/filesystems/fuse/`；
+  `fs/unicode/{mkutf8data.c,utf8data.c_shipped}`）。v3 补丁的 `index` 行与工作树不一致属正常
+  （补丁基于上游同版本文件生成），`git apply` 只看上下文，实测会带 1～189 行的 offset 成功。
 - 新内核为**单片且不打包模块**：`=m` 的功能（如 `CONFIG_ZRAM=m`）实际不可用，
   迁移这类功能时要同时把配置改成 `=y`（或在 AK3 包内附带模块）。
 - 换基线（改 `data/android15/6.6.json` 的 `baseline_commit`）时，`patches/` 与
@@ -136,15 +143,25 @@ on property:persist.sys.stability.smartfocusio.v1=off
 - 全系统只有这一个 rc 写调度器；`cpq` 是厂商模块（`cpq 36864 1`，被 `xr_qi`/`vip_sched`/`perf_actuator` 依赖），dmesg `[0.548920] io scheduler cpq registered`；
 - 调度器有"两段"：队列建立时的默认值（`elevator_init_mq()` → `elevator_get_default()`，我们控制）与运行时切换（`elv_iosched_store()` → `elevator_change()`，需要拦截）。6.6 内核**没有** `elevator_set_default()` 之类接口，所以"默认被改成 cpq"只能是这种 sysfs 写入。
 
-**处理**：`--adios-lock=cpq`（默认）在 `elevator_change()` 中拒绝切到 `cpq`（`pr_info_once` 打日志后 `return 0`），
-其余调度器仍可自由切换；工作流输入 `adios_lock` 可选 `cpq`/`all`/`off`。
+**处理**：默认调度器由「是否编 ADIOS」决定，拦截由 `adios_lock` 决定（默认 `off`）：
 
-**刷机后验证**：
+| `adios_lock` | `elevator_get_default()` | `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` | `elevator_change()` | 默认调度器 | 开机后 init.qti 写 cpq |
+| --- | --- | --- | --- | --- | --- |
+| `off`（默认） | 注入 → `return elevator_find_get(q, "adios")` | 打开 | 不注入 | `adios` | 生效，被切成 `cpq` |
+| `cpq` | 注入 → adios | 打开 | 拒绝切到 `cpq`（`pr_info_once` 后 `return 0`） | `adios` | 被拦下，保持 `adios` |
+| `all` | 注入 → adios | 打开 | 拒绝任何非 `adios` 切换 | `adios` | 被拦下 |
+
+`off` 只是关掉 `elevator_change()` 拦截；两处注入与 `CONFIG_MQ_IOSCHED_DEFAULT_ADIOS` 在所有模式下都打开。
+要连调度器都不编、默认仍走内核自带 `mq-deadline`，用 `--no-adios`。
+
+**刷机后验证**（`cat /sys/block/sda/queue/scheduler` 三种模式开机后都应为 `[adios]`；
+`cpq`/`all` 下 init.qti 的写入会被拦掉）：
 
 ```bash
 cat /sys/block/sda/queue/scheduler          # 期望 [adios]
-dmesg | grep -i 'ADIOS locked'              # 期望 elevator: blocked scheduler switch to cpq (ADIOS locked)
+dmesg | grep -i 'ADIOS locked'              # 仅 cpq/all: 期望 elevator: blocked scheduler switch to cpq (ADIOS locked)
 ```
 
-**代价**：小米 smartfocusio 的调度器侧（cpq + `/dev/blkio/*/blkio.cpq.level`）不再生效（相关写入变成空转）；
-如需保留 cpq，把 `adios_lock` 设为 `off` 即可。
+**代价**：小米 smartfocusio 的调度器侧（cpq + `/dev/blkio/*/blkio.cpq.level`）在 `cpq`/`all` 下不再生效
+（相关写入变成空转）；默认 `off` 不拦，init.qti 仍可把调度器切成 `cpq`（此时 smartfocusio 正常，
+但 adios 被切走）。
