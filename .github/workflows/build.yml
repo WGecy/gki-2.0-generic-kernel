@@ -60,6 +60,11 @@ on:
         required: false
         type: string
         default: 'gki-android15-6.6'
+      susfs_pin:
+        description: 'SUSFS 固定提交 (留空 = 跟随 susfs_branch)'
+        required: false
+        type: string
+        default: '93114563fd6b08092b9ce8c0309738c921ac8bd1'
       adios_lock:
         description: 'ADIOS 运行时切换拦截: off | cpq | all'
         required: false
@@ -102,7 +107,7 @@ jobs:
           echo " 基线 commit  : ${{ inputs.baseline_commit }}"
           echo " 工具链       : clang-19 / lld-19 / llvm-19 (apt)"
           echo " KernelSU     : ${{ inputs.ksu_repo }} @ ${{ inputs.ksu_branch }}"
-          echo " SUSFS        : ${{ inputs.susfs_repo }} @ ${{ inputs.susfs_branch }}"
+          echo " SUSFS        : ${{ inputs.susfs_repo }} @ ${{ inputs.susfs_pin || inputs.susfs_branch }}"
           echo " ADIOS 拦截   : ${{ inputs.adios_lock }}"
           echo " 额外后缀     : '${{ inputs.custom_suffix }}'"
           echo "====================================================="
@@ -219,6 +224,7 @@ jobs:
             --ksu-branch "${{ inputs.ksu_branch }}" \
             --susfs-repo "${{ inputs.susfs_repo }}" \
             --susfs-branch "${{ inputs.susfs_branch }}" \
+            --susfs-pin "${{ inputs.susfs_pin }}" \
             --adios-lock "${{ inputs.adios_lock }}"
 
       - name: 生成并校验 defconfig

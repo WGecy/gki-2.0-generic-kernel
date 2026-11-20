@@ -28,7 +28,9 @@
 #    --ksu-repo URL        KernelSU 仓库, 默认 https://github.com/WGecy/BakaSU
 #    --ksu-branch BR       KernelSU 分支/标签, 默认 main
 #    --susfs-repo URL      SUSFS 仓库, 默认 https://gitlab.com/simonpunk/susfs4ksu.git
-#    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6
+#    --susfs-branch BR     SUSFS 分支, 默认 gki-android15-6.6 (SUSFS_PIN 为空时才用)
+#    --susfs-pin SHA       SUSFS 固定提交, 默认 93114563fd6b08092b9ce8c0309738c921ac8bd1
+#                          (非空时按 commit 抓取并校验, 不再跟随分支; 传空串 = 关闭固定)
 #    --android-version V   默认 android15 (决定 SUSFS 补丁文件名)
 #    --kernel-version V    默认 6.6
 #    --no-fusebpf          跳过 fusebpf 内核侧补丁 (v3, third_party/fusebpf)
@@ -58,6 +60,8 @@ KSU_REPO="https://github.com/WGecy/BakaSU"
 KSU_BRANCH="main"
 SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
 SUSFS_BRANCH="gki-android15-6.6"
+# SUSFS 固定版本: 非空时按 commit 抓取, 保证每次构建拿到同一份源码 (与分支互斥, 优先本项)
+SUSFS_PIN="93114563fd6b08092b9ce8c0309738c921ac8bd1"
 ANDROID_VERSION="android15"
 KERNEL_VERSION="6.6"
 ENABLE_FUSEBPF=1
@@ -89,6 +93,7 @@ while [ $# -gt 0 ]; do
     --ksu-branch)      KSU_BRANCH="${2:?}"; shift 2 ;;
     --susfs-repo)      SUSFS_REPO="${2:?}"; shift 2 ;;
     --susfs-branch)    SUSFS_BRANCH="${2:?}"; shift 2 ;;
+    --susfs-pin)       SUSFS_PIN="${2-}"; shift 2 ;;
     --android-version) ANDROID_VERSION="${2:?}"; shift 2 ;;
     --kernel-version)  KERNEL_VERSION="${2:?}"; shift 2 ;;
     --no-susfs)        ENABLE_SUSFS=0; shift ;;
@@ -112,7 +117,7 @@ log "GKI_ROOT   : $GKI_ROOT"
 log "工作区     : $WORKSPACE"
 log "KernelSU   : $KSU_REPO @ $KSU_BRANCH"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf    : third_party/fusebpf (v3, 内建生效)"
-[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ $SUSFS_BRANCH"
+[ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS      : $SUSFS_REPO @ ${SUSFS_PIN:-$SUSFS_BRANCH}"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode    : third_party/unicode_bypass (零宽字符绕过修复)"
 
 # ============================================================================
@@ -321,19 +326,40 @@ stage_susfs() {
   local susfs_dir="$GKI_ROOT/susfs4ksu"
   local patch_name="50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"
 
-  if [ -d "$susfs_dir/.git" ]; then
-    # 同 stage_ksu: 拉取失败时退用本地已有副本
-    if git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_BRANCH" 2>&1 | tail -2; then
-      git -C "$susfs_dir" checkout -q -B "$SUSFS_BRANCH" FETCH_HEAD
+  if [ -n "$SUSFS_PIN" ]; then
+    # 固定版本: 直接按 commit 抓取 (gitlab 支持裸 SHA fetch), 不走分支
+    if [ -d "$susfs_dir/.git" ]; then
+      if git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_PIN" 2>&1 | tail -2; then
+        git -C "$susfs_dir" checkout -q -B "pin-$SUSFS_PIN" FETCH_HEAD
+      else
+        warn "SUSFS 固定提交抓取失败 (网络?)"
+      fi
     else
-      warn "SUSFS 更新失败 (网络?), 使用本地已有版本"
+      rm -rf "$susfs_dir"
+      git init -q "$susfs_dir"
+      git -C "$susfs_dir" remote add origin "$SUSFS_REPO"
+      git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_PIN"
+      git -C "$susfs_dir" checkout -q -B "pin-$SUSFS_PIN" FETCH_HEAD
     fi
+    SUSFS_COMMIT="$(git -C "$susfs_dir" rev-parse HEAD)"
+    [ "$SUSFS_COMMIT" = "$SUSFS_PIN" ] \
+      || die "SUSFS 版本不匹配: 期望 $SUSFS_PIN 实际 $SUSFS_COMMIT"
+    log "SUSFS commit: $SUSFS_COMMIT (固定 pin)"
   else
-    rm -rf "$susfs_dir"
-    git clone --depth 1 -b "$SUSFS_BRANCH" "$SUSFS_REPO" "$susfs_dir"
+    if [ -d "$susfs_dir/.git" ]; then
+      # 同 stage_ksu: 拉取失败时退用本地已有副本
+      if git -C "$susfs_dir" fetch --depth 1 origin "$SUSFS_BRANCH" 2>&1 | tail -2; then
+        git -C "$susfs_dir" checkout -q -B "$SUSFS_BRANCH" FETCH_HEAD
+      else
+        warn "SUSFS 更新失败 (网络?), 使用本地已有版本"
+      fi
+    else
+      rm -rf "$susfs_dir"
+      git clone --depth 1 -b "$SUSFS_BRANCH" "$SUSFS_REPO" "$susfs_dir"
+    fi
+    SUSFS_COMMIT="$(git -C "$susfs_dir" rev-parse --short HEAD)"
+    log "SUSFS commit: $SUSFS_COMMIT ($SUSFS_BRANCH)"
   fi
-  SUSFS_COMMIT="$(git -C "$susfs_dir" rev-parse --short HEAD)"
-  log "SUSFS commit: $SUSFS_COMMIT ($SUSFS_BRANCH)"
 
   local patch="$susfs_dir/kernel_patches/$patch_name"
   [ -f "$patch" ] || die "SUSFS 补丁缺失: $patch"
@@ -594,6 +620,7 @@ stage_defconfig() {
     echo "SUSFS_REPO=$SUSFS_REPO"
     echo "SUSFS_BRANCH=$SUSFS_BRANCH"
     echo "SUSFS_COMMIT=${SUSFS_COMMIT:-disabled}"
+    echo "SUSFS_PIN=${SUSFS_PIN:-none}"
     # NoMount 由 BakaSU 内核自带 (kernel/nomount/), 没有独立开关; 这里记录它是否真的
     # 进了树, 便于 release notes 与排障 (drivers/kernelsu -> BakaSU/kernel 的整目录软链接)
     if [ -f "$COMMON/drivers/kernelsu/nomount/nomount.c" ]; then

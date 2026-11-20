@@ -80,8 +80,13 @@ pack-boot.sh <stock boot.img> <Image> <out.img>
   → 校验产物（版本串、`kernelsu_init`、SUSFS 初始化串、NoMount、ADIOS 符号）
   → 用 `third_party/AnyKernel3` 打成 `android15-6.6.158-2026-09-AnyKernel3.zip` → 上传 artifact。
 - `kernel-android15-6-6.yml`：手动触发（`workflow_dispatch`）。读 `data/android15/6.6.json` 的 `entries`
-  生成矩阵，逐个调用 `build.yml`。输入：`ksu_branch`、`susfs_branch`、`adios_lock`(off|cpq|all)、
+  生成矩阵，逐个调用 `build.yml`。输入：`ksu_branch`、`susfs_branch`、`susfs_pin`、`adios_lock`(off|cpq|all)、
   `custom_suffix`、`build_time`。
+
+  `susfs_pin` 是 SUSFS 的固定提交，默认 `93114563fd6b08092b9ce8c0309738c921ac8bd1`：非空时
+  `ci-integrate.sh` 直接按该 commit 抓取（不克隆分支）并校验 `HEAD` 与之相等，构建期集成的 SUSFS
+  版本就固定在这个提交上；留空则回退为跟随 `susfs_branch`。实际使用的提交会写进产物
+  `build-info.txt` 的 `SUSFS_COMMIT` / `SUSFS_PIN` 两行。
 
 内核树本身仍是纯 GKI：KSU/fusebpf/SUSFS/ADIOS/Unicode 全由 `scripts/ci-integrate.sh` 在 CI 构建期
 集成，不会以源码形式进仓库。`third_party/` 里只有构建期素材：
