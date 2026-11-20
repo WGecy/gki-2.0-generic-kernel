@@ -6,9 +6,9 @@
 #    2. 拉取 ACK 基线 (android15-6.6 @ baseline_commit)
 #    3. git am patches/*.patch 打上 84 个 GKI 定制补丁
 #    4. 准备 clang-19 / lld-19 / llvm-19 + AOSP build-tools (pahole 等)
-#    5. scripts/ci-integrate.sh 集成 BakaSU(含内置 NoMount) + fusebpf + SUSFS + ADIOS + Unicode
+#    5. scripts/ci-integrate.sh 集成 BakaSU(Built-In 内建 CONFIG_KSU=y) + fusebpf + SUSFS + ADIOS + Unicode
 #    6. 生成 defconfig 并校验配置项
-#    7. 编译 Image 并校验产物 (版本串 / KSU / SUSFS / NoMount / ADIOS / fusebpf)
+#    7. 编译 Image 并校验产物 (版本串 / KSU / SUSFS / ADIOS / fusebpf)
 #    8. 用 third_party/AnyKernel3 打包成可直刷的 zip
 #    9. 上传 Image + AnyKernel3 zip + kernel.release + build-info.txt 作为 artifact
 #
@@ -260,10 +260,24 @@ jobs:
             grep -qF 'GKI-ADIOS-LOCK-BEGIN' block/elevator.c || { echo '::error::缺少 ADIOS 切换拦截块'; exit 1; }
           fi
           [ -f block/adios.c ] || { echo '::error::block/adios.c 缺失'; exit 1; }
-          [ -d drivers/kernelsu ] || { echo '::error::drivers/kernelsu 缺失'; exit 1; }
-          for f in nomount.c nomount.h nomount_api.h; do
-            [ -f "drivers/kernelsu/nomount/$f" ] || { echo "::error::缺少 nomount/$f"; exit 1; }
-          done
+          # BakaSU 内建集成: drivers/kernelsu 必须是指向 BakaSU/kernel 的有效软链接,
+          # 并且 kernel/Kbuild 里确实有 obj-$(CONFIG_KSU) += kernelsu.o (内建编进 vmlinux 的前提)。
+          # 注意: 上游 BakaSU 已移除 NoMount (kernel/nomount/ 不存在), 这里不再断言它。
+          [ -f drivers/kernelsu/Kbuild ] || { echo '::error::drivers/kernelsu/Kbuild 缺失 (内建集成未生效)'; exit 1; }
+          [ -f drivers/kernelsu/Kconfig ] || { echo '::error::drivers/kernelsu/Kconfig 缺失'; exit 1; }
+          grep -qF 'obj-$(CONFIG_KSU) += kernelsu.o' drivers/kernelsu/Kbuild \
+            || { echo '::error::drivers/kernelsu/Kbuild 没有 obj-$(CONFIG_KSU) += kernelsu.o'; exit 1; }
+          grep -qF 'drivers/kernelsu/Kconfig' drivers/Kconfig \
+            || { echo '::error::drivers/Kconfig 未 source drivers/kernelsu/Kconfig'; exit 1; }
+          grep -qx 'CONFIG_KSU=y' "$CONF" || { echo '::error::CONFIG_KSU 不是内建 (=y)'; exit 1; }
+          # 钩子方式是 BakaSU Kconfig 里的 choice (三选一, 互斥): .config 里只会出现被选中的那一个,
+          # 未选中的不会以 "# ... is not set" 形式出现, 所以这里按"恰好命中一个"来校验。
+          if grep -qx 'CONFIG_KSU_MANUAL_HOOK=y' "$CONF"; then
+            echo '::error::CONFIG_KSU_MANUAL_HOOK 被打开 (那是 non-GKI 手工 hook, 缺 hook 会编译失败)'; exit 1
+          fi
+          HOOK_SEL="$(grep -cE '^CONFIG_KSU_(TRACEPOINT_HOOK|MANUAL_HOOK|SUSFS)=y$' "$CONF" || true)"
+          [ "$HOOK_SEL" = 1 ] \
+            || { echo "::error::KSU 钩子方式应恰好选中一种, 实际 $HOOK_SEL 种"; exit 1; }
           # fusebpf v3: backing.c 三个 stage + dir.c 挂载点 + fuse_i.h io 结构 + 4 处 EEXIST 归一化
           for m in fuse_lookup_revalidate_initialize fuse_lookup_revalidate_backing \
                    fuse_lookup_revalidate_finalize; do
@@ -310,7 +324,7 @@ jobs:
           } >> "$GITHUB_ENV"
           ls -lh out/arch/arm64/boot/Image
 
-      - name: 校验产物 (KSU / SUSFS / NoMount / ADIOS)
+      - name: 校验产物 (KSU Built-In / SUSFS / ADIOS / fusebpf)
         shell: bash
         working-directory: gki-kernel/common
         run: |
@@ -318,13 +332,11 @@ jobs:
           grep -q "$KERNEL_RELEASE" "$KERNEL_IMAGE" || { echo '::error::Image 内缺少版本串'; exit 1; }
           nm out/vmlinux | grep -q ' kernelsu_init' || { echo '::error::vmlinux 缺少 kernelsu_init'; exit 1; }
           grep -qF 'susfs is initialized' < <(strings out/vmlinux) || { echo '::error::vmlinux 缺少 SUSFS 初始化串'; exit 1; }
-          if nm out/vmlinux | grep -q ' ksu_nomount_init'; then
-            echo 'NoMount: 符号 ksu_nomount_init 已就绪'
-          elif grep -qF 'NoMount: Loaded successfully' < <(strings out/vmlinux); then
-            echo 'NoMount: 运行时就绪串已就绪'
-          else
-            echo '::error::vmlinux 未包含 NoMount'; exit 1
-          fi
+          # BakaSU Built-In: kernel/core/init.c 的启动串会写死 "Work mode: Built-in",
+          # LKM 模式下同一句是 "Work mode: LKM" —— 用它确认驱动是真内建而不是别的形态。
+          grep -qF 'Work mode: Built-in' < <(strings out/vmlinux) \
+            || { echo '::error::vmlinux 缺少 BakaSU Built-In 启动串 (KSU 未以 =y 内建)'; exit 1; }
+          echo 'BakaSU: Built-In 启动串已就绪'
           nm out/vmlinux | grep -q 'adios' || { echo '::error::vmlinux 中找不到任何 ADIOS 符号'; exit 1; }
           echo '产物校验通过'
 

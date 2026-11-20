@@ -75,13 +75,27 @@ pack-boot.sh <stock boot.img> <Image> <out.img>
 
 - `build.yml`：可被调用的构建流程（`workflow_call`）。装依赖 → 拉 ACK 基线 → `git am patches/*.patch`
   → 装 clang-19 / lld-19 / llvm-19 与 AOSP build-tools → 跑 `scripts/ci-integrate.sh` 集成
-  **BakaSU(KernelSU，含自带 NoMount) + fusebpf + SUSFS + ADIOS IO 调度器 + Unicode 零宽字符绕过**
+  **BakaSU(KernelSU，Built-In 内建 `CONFIG_KSU=y`) + fusebpf + SUSFS + ADIOS IO 调度器 + Unicode 零宽字符绕过**
   → 生成并校验 defconfig → 编译 Image
-  → 校验产物（版本串、`kernelsu_init`、SUSFS 初始化串、NoMount、ADIOS 符号）
+  → 校验产物（版本串、`kernelsu_init`、SUSFS 初始化串、`Work mode: Built-in` 启动串、ADIOS 符号）
   → 用 `third_party/AnyKernel3` 打成 `android15-6.6.158-2026-09-AnyKernel3.zip` → 上传 artifact。
 - `kernel-android15-6-6.yml`：手动触发（`workflow_dispatch`）。读 `data/android15/6.6.json` 的 `entries`
   生成矩阵，逐个调用 `build.yml`。输入：`ksu_branch`、`susfs_branch`、`susfs_pin`、`adios_lock`(off|cpq|all)、
   `custom_suffix`、`build_time`。
+
+  BakaSU 按[官方文档](https://bakasu.org/guide/build)做**内建（Built-In）**集成：把
+  `WGecy/BakaSU` 的 `kernel/` 以软链接放进内核树的 `drivers/kernelsu`，defconfig 打开
+  `CONFIG_KSU=y`。钩子方式由 BakaSU 的 `kernel/Kconfig` choice 决定：SUSFS 打开时走
+  `CONFIG_KSU_SUSFS`（SUSFS Inline Hook），否则走 GKI 2.0 默认的
+  `CONFIG_KSU_TRACEPOINT_HOOK`（tracepoint syscall redirect）——两种都**不需要**手工改
+  `fs/exec.c`、`fs/stat.c` 的内核源码；`CONFIG_KSU_MANUAL_HOOK` 会被显式关闭（那是给
+  non-GKI 的，少写一个 hook 就编译失败）。上游 BakaSU 已移除 NoMount，因此产物里不再有
+  `ksu_nomount_init` 符号或 `NoMount: Loaded successfully` 串。
+
+  BakaSU 的源码是 **blobless + sparse-checkout** 克隆（`git clone --filter=blob:none` 后只
+  checkout `kernel/`）：`kernel/Kbuild` 会检查 `../.git` 并用 `git rev-list --count` /
+  `git describe --tags` 算版本号，且发现 `.git/shallow` 时会跑 `git fetch --unshallow`，
+  所以不能用 `--depth 1` 浅克隆（CI 里容易拉不下来，版本号也会算错）。
 
   `susfs_pin` 是 SUSFS 的固定提交，默认 `93114563fd6b08092b9ce8c0309738c921ac8bd1`：非空时
   `ci-integrate.sh` 直接按该 commit 抓取（不克隆分支）并校验 `HEAD` 与之相等，构建期集成的 SUSFS

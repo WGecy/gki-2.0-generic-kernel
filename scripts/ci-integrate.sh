@@ -3,7 +3,7 @@
 #  GKI 2.0 内核集成脚本 —— BakaSU + fusebpf + SUSFS + ADIOS + Unicode 绕过
 # ----------------------------------------------------------------------------
 #  在 "$GKI_ROOT/common" (ACK 基线 + patches/*.patch 已 git am 到位的内核树) 之上:
-#    1. 集成 BakaSU (KernelSU, 自带内核侧 NoMount): drivers/kernelsu 符号链接 + Makefile/Kconfig
+#    1. 集成 BakaSU (KernelSU, Built-In 内建 CONFIG_KSU=y): drivers/kernelsu 符号链接 + Makefile/Kconfig
 #    2. 应用 fusebpf 内核侧补丁 (third_party/fusebpf, v3: FUSE 直通 lookup 重新校验 + EEXIST 归一化)
 #    3. 应用 SUSFS (gitlab simonpunk 上游 50_add_susfs_in_gki-<android>-<kernel>.patch)
 #    4. 应用 ADIOS IO 调度器 (third_party/adios) 并强制其为默认调度器 (elevator_get_default());
@@ -12,12 +12,18 @@
 #    6. 写入 KSU / SUSFS / ADIOS / Unicode 的 defconfig 配置项 (fusebpf 无配置项, 无条件生效)
 #  脚本幂等: 重复执行只更新 KernelSU/SUSFS 源码, 已应用的补丁自动跳过。
 #
-#  关于 NoMount: 不要再单独集成。BakaSU 的 kernel/ 自带 nomount/
-#  (kernel/nomount/{nomount.c,nomount.h,nomount_api.h}, 由 kernel/Kbuild 在
-#  CONFIG_KSU=y 且内核 4.9 - 6.12 时编进 kernelsu.o), 而 drivers/kernelsu 是整目录
-#  软链接, 所以内建 KSU 一进来 NoMount 就已经在 vmlinux 里了。再往 fs/nomount/ 复制一份
-#  会重复注册 key type "nomount": fs_initcall 先占位后, KSU 侧 register_key_type 返回
-#  -EEXIST, dmesg 出现 "KernelSU: failed to init nomount: -17"。
+#  关于 BakaSU 内建集成 (官方文档 https://bakasu.org/guide/build):
+#  把 BakaSU 的 kernel/ 放进内核树 + defconfig 里 CONFIG_KSU=y 即可。钩子方式由
+#  kernel/Kconfig 的 choice 决定 (三选一, 互斥): KSU_SUSFS (SUSFS Inline Hook, 需要
+#  SUSFS 内核侧补丁) / KSU_TRACEPOINT_HOOK (GKI 2.0 默认的 tracepoint syscall redirect) /
+#  KSU_MANUAL_HOOK (non-GKI 的手工钩子, 要在 fs/exec.c、fs/stat.c 等手写调用, 少一个 hook
+#  就编译失败)。GKI 2.0 只需要前者之一, 本脚本永不打开 KSU_MANUAL_HOOK。
+#  kernel/Kbuild 要求 $(KSU_SRC)/../.git 存在 (禁止直接拷源码), 并用
+#  git rev-list --count / git describe --tags 算版本号, 且检测到 .git/shallow 会执行
+#  git fetch --unshallow —— 所以这里用 --filter=blob:none (blobless, 历史完整) +
+#  sparse-checkout 只取 kernel/ + uapi/ 的克隆方式, 既避开浅克隆的 fetch --unshallow,
+#  又只下载内核侧需要的对象 (kernel/include/uapi 是 -> ../../uapi 的相对软链接,
+#  少了 uapi/ 就成断链, 编译时 uapi/supercall.h 等头文件会找不到)。
 #
 #  用法:
 #    bash scripts/ci-integrate.sh --gki-root "$HOME/gki-kernel"
@@ -35,8 +41,7 @@
 #    --kernel-version V    默认 6.6
 #    --no-fusebpf          跳过 fusebpf 内核侧补丁 (v3, third_party/fusebpf)
 #    --no-susfs            跳过 SUSFS
-#    --no-nomount          兼容旧用法, 现在什么都不做: NoMount 由 BakaSU 内核自带
-#                          (kernel/nomount/), 再去掉它要给 KSU 传 CONFIG_KSU_DISABLE_NOMOUNT
+#    --no-nomount          兼容旧用法, 现在什么都不做 (上游 BakaSU 已移除 NoMount)
 #    --no-adios            跳过 ADIOS IO 调度器
 #    --no-unicode          跳过 Unicode 零宽字符绕过补丁 (third_party/unicode_bypass)
 #    --adios-lock MODE     ADIOS 运行时切换拦截: off|cpq|all (默认 off)
@@ -97,7 +102,7 @@ while [ $# -gt 0 ]; do
     --android-version) ANDROID_VERSION="${2:?}"; shift 2 ;;
     --kernel-version)  KERNEL_VERSION="${2:?}"; shift 2 ;;
     --no-susfs)        ENABLE_SUSFS=0; shift ;;
-    --no-nomount)      warn "--no-nomount: 已无意义 (NoMount 随 BakaSU 内核自带), 忽略"; shift ;;
+    --no-nomount)      warn "--no-nomount: 已无意义 (上游 BakaSU 已移除 NoMount), 忽略"; shift ;;
     --no-fusebpf)      ENABLE_FUSEBPF=0; shift ;;
     --no-adios)        ENABLE_ADIOS=0; shift ;;
     --no-unicode)      ENABLE_UNICODE=0; shift ;;
@@ -238,22 +243,56 @@ stage_ksu() {
   local ksu_dir="$GKI_ROOT/KernelSU"
   local drivers="$COMMON/drivers"
 
-  if [ -d "$ksu_dir/.git" ]; then
-    # 更新失败 (网络抖动) 时退用本地已有副本, 不要因为拉取失败整体挂掉
-    if git -C "$ksu_dir" fetch --depth 1 origin "$KSU_BRANCH" 2>&1 | tail -2; then
-      git -C "$ksu_dir" checkout -q -B "$KSU_BRANCH" FETCH_HEAD
+  # 克隆方式: blobless + sparse-checkout 只取 kernel/ (见文件头说明)。
+  # 为什么不用 --depth 1: BakaSU 的 kernel/Kbuild 一旦看到 .git/shallow 就会
+  # git fetch --unshallow, 并且依赖 rev-list --count / describe --tags 算版本号,
+  # 浅克隆在 CI 里既不稳也不准。
+  ksu_clone() {
+    rm -rf "$ksu_dir"
+    git clone --filter=blob:none --no-checkout "$KSU_REPO" "$ksu_dir" \
+      || die "克隆 BakaSU 失败: $KSU_REPO"
+    git -C "$ksu_dir" sparse-checkout init --cone
+    # kernel/include/uapi 是指向仓库根 uapi/ 的相对软链接, 只取 kernel/ 会把它拉成断链,
+    # 编译时 #include "uapi/supercall.h" 直接失败 —— 所以 uapi/ 必须一起取。
+    git -C "$ksu_dir" sparse-checkout set kernel uapi
+    if git -C "$ksu_dir" rev-parse --verify --quiet "origin/$KSU_BRANCH" >/dev/null; then
+      git -C "$ksu_dir" checkout -q -B "$KSU_BRANCH" "origin/$KSU_BRANCH"
     else
-      warn "KernelSU 更新失败 (网络?), 使用本地已有版本"
+      git -C "$ksu_dir" checkout -q --detach "$KSU_BRANCH"
+    fi
+  }
+
+  if [ -d "$ksu_dir/.git" ] && [ ! -f "$ksu_dir/.git/shallow" ]; then
+    log "更新已有 BakaSU 副本: $ksu_dir"
+    # 更新失败 (网络抖动) 时退用本地已有副本, 不要因为拉取失败整体挂掉
+    if git -C "$ksu_dir" fetch --filter=blob:none origin "$KSU_BRANCH" >/dev/null 2>&1; then
+      git -C "$ksu_dir" sparse-checkout set kernel uapi
+      if ! git -C "$ksu_dir" checkout -q -B "$KSU_BRANCH" FETCH_HEAD 2>/dev/null; then
+        git -C "$ksu_dir" checkout -q --detach FETCH_HEAD
+      fi
+    else
+      warn "BakaSU 更新失败 (网络?), 使用本地已有副本"
     fi
   else
-    rm -rf "$ksu_dir"
-    git clone --depth 1 -b "$KSU_BRANCH" "$KSU_REPO" "$ksu_dir"
+    # 不存在, 或者是旧脚本留下的 --depth 1 浅克隆 (会让 Kbuild 触发 fetch --unshallow)
+    ksu_clone
   fi
-  KSU_COMMIT="$(git -C "$ksu_dir" rev-parse --short HEAD)"
-  log "KernelSU commit: $KSU_COMMIT"
 
   # 内建集成依赖 kernel/Kbuild (kbuild 优先读 Kbuild, 而非 LKM 用的 kernel/Makefile)
   [ -f "$ksu_dir/kernel/Kbuild" ] || die "KernelSU/kernel/Kbuild 不存在, 该版本不支持内建集成 (CONFIG_KSU=y)"
+  [ -f "$ksu_dir/kernel/Kconfig" ] || die "BakaSU/kernel/Kconfig 不存在 (不是可内建集成的仓库?)"
+  [ -f "$ksu_dir/kernel/core/init.c" ] || die "BakaSU/kernel/core/init.c 不存在 (sparse-checkout 没取到 kernel/)"
+  # kernel/include/uapi -> ../../uapi 的软链接目标必须在 (否则 uapi/supercall.h 等头文件缺失)
+  [ -f "$ksu_dir/uapi/supercall.h" ] \
+    || die "BakaSU/uapi/supercall.h 不存在 (sparse-checkout 漏了 uapi/, kernel/include/uapi 会成断链)"
+  grep -qF 'obj-$(CONFIG_KSU) += kernelsu.o' "$ksu_dir/kernel/Kbuild" \
+    || die "BakaSU/kernel/Kbuild 没有 obj-$(CONFIG_KSU) += kernelsu.o, 不能内建集成"
+
+  KSU_COMMIT="$(git -C "$ksu_dir" rev-parse --short HEAD)"
+  KSU_COMMIT_FULL="$(git -C "$ksu_dir" rev-parse HEAD)"
+  KSU_VERSION_NAME="$(git -C "$ksu_dir" describe --tags --always 2>/dev/null || echo "$KSU_COMMIT")"
+  KSU_COUNT="$(git -C "$ksu_dir" rev-list --count HEAD)"
+  log "BakaSU commit: $KSU_COMMIT ($KSU_VERSION_NAME, $KSU_COUNT commits)"
 
   # 符号链接 + Makefile / Kconfig
   # 注意: 残留的旧链接/目录会让 ln 把新链接建到目录里面 (幂等重跑时必现), 先清掉
@@ -267,15 +306,15 @@ stage_ksu() {
     printf 'source "drivers/kernelsu/Kconfig"\n' | insert_before_last_endmenu "$drivers/Kconfig"
     ok "drivers/Kconfig: 已 source drivers/kernelsu/Kconfig"
   fi
-  # NoMount 不是单独集成项: 它在 kernel/nomount/ 里, 由 kernel/Kbuild 编进 kernelsu.o,
-  # 而上面整目录软链接已经把整个 kernel/ 搬进 drivers/kernelsu/, 所以它自动就在树里。
-  if [ -f "$ksu_dir/kernel/nomount/nomount.c" ] && \
-     grep -qF 'nomount/nomount.o' "$ksu_dir/kernel/Kbuild"; then
-    ok "NoMount 随 KSU 内建 (kernel/nomount/, 由 kernel/Kbuild 编进 kernelsu.o, 无需单独集成)"
-  else
-    warn "当前 KSU 分支没有内置 NoMount (缺 kernel/nomount/ 或 Kbuild 未引用): 内核将不带 NoMount"
-  fi
-  ok "KernelSU 内建集成完成 (drivers/kernelsu -> $ksu_dir/kernel)"
+  # 内建模式校验: KSU 是 tristate (内建=y), 钩子方式是 Kconfig choice (三选一)
+  grep -q '^config KSU$' "$ksu_dir/kernel/Kconfig" \
+    || die "BakaSU/kernel/Kconfig 缺少 config KSU"
+  local h
+  for h in KSU_SUSFS KSU_TRACEPOINT_HOOK KSU_MANUAL_HOOK; do
+    grep -q "^config $h\$" "$ksu_dir/kernel/Kconfig" \
+      || warn "BakaSU/kernel/Kconfig 没有 $h (钩子方式的选择可能与预期不同)"
+  done
+  ok "BakaSU 内建集成完成 (drivers/kernelsu -> $ksu_dir/kernel, CONFIG_KSU=y, $KSU_VERSION_NAME)"
 }
 
 # ============================================================================
@@ -568,18 +607,33 @@ stage_defconfig() {
   local defconfig="$COMMON/arch/arm64/configs/gki_defconfig"
   [ -f "$defconfig" ] || die "defconfig 不存在: $defconfig"
 
-  # KernelSU: 内建 (y) — 钩子方式由 BakaSU Kconfig 的 choice 默认值决定
-  # (GKI2 走 tracepoint syscall redirect, 无需手工 hook 源码补丁)
+  # KernelSU: 内建 (y)。钩子方式由 BakaSU kernel/Kconfig 的 "KernelSU Hooking Method"
+  # choice 决定 (三选一, 互斥): default KSU_TRACEPOINT_HOOK = GKI 2.0 上游 tracepoint
+  # syscall redirect, 不需要任何手工 hook 源码补丁 —— 这正是本工作流要的 GKI 形态。
+  # 这里只显式关掉 KSU_MANUAL_HOOK: 它依赖 KSU != m, 且要求按 manual-integrate 文档手工改
+  # fs/exec.c、fs/stat.c 等 (少一个 hook 直接编译失败), 一旦被别处打开就会让构建莫名失败。
+  # 其余两个成员不写进 defconfig —— choice 的 default 是 KSU_TRACEPOINT_HOOK, 打开 SUSFS 时
+  # 由下面的 CONFIG_KSU_SUSFS=y 顶替它; 手写 choice 成员反而会留下互相矛盾的残留行。
+  disable_config "$defconfig" 'CONFIG_KSU_MANUAL_HOOK'
   enable_config "$defconfig" 'CONFIG_KSU=y'
+  # BakaSU 的 kernel/Kbuild 在 CONFIG_KALLSYMS_ALL!=y 时会启用 tools/static_export_check.mk,
+  # 要求 security/selinux/selinuxfs.c 等处的 static 符号已被导出 —— GKI 默认就带
+  # CONFIG_KALLSYMS_ALL=y, 这里显式确保一次, 避免落到那条需要额外导出符号的分支上。
+  enable_config "$defconfig" 'CONFIG_KALLSYMS_ALL=y'
+
   # 注意: 不写 CONFIG_KSU_NETISOLATE —— BakaSU (WGecy/BakaSU) 的 kernel/ 里没有
   # netisolate 子模块 (那是 BakaSU-Ultra 独有的), Kconfig 里也没有该符号; 写进去只会被
   # make gki_defconfig 静默丢弃, 反而让人误以为联网隔离已编进内核。
   #
-  # 注意: 不写 CONFIG_NOMOUNT —— 该符号已不存在。NoMount 由 BakaSU 的 kernel/nomount/
-  # 随 kernelsu.o 一起编进 vmlinux (kernel/Kbuild), 只受 CONFIG_KSU 与
-  # CONFIG_KSU_DISABLE_NOMOUNT 控制; 这里再写 CONFIG_NOMOUNT=y 只会被 Kconfig 静默丢弃。
+  # 注意: 不写 CONFIG_NOMOUNT —— 该特性在 BakaSU 上游已被移除 (kernel/ 下没有 nomount/),
+  # 所以构建产物里既不会有 ksu_nomount_init 符号, 也不会有 "NoMount: Loaded successfully" 串。
+  # 关掉 KSU_MANUAL_HOOK 后, 钩子方式二选一: SUSFS 关时走 tracepoint, SUSFS 开时走 SUSFS 内联钩子
+  # (CONFIG_KSU_SUSFS 也在同一个 choice 里, 与 KSU_TRACEPOINT_HOOK 互斥, 见下面的分支)。
 
   if [ "$ENABLE_SUSFS" = 1 ]; then
+    # SUSFS 内核侧补丁已在 stage 3 打上, 钩子方式选 BakaSU 的 "SUSFS Inline Hook"
+    # (与 KSU_TRACEPOINT_HOOK 互斥: 同一个 choice, 且它依赖 THREAD_INFO_IN_TASK && 64BIT;
+    #  选中 SUSFS 后 tracepoint 自然落选, 不需要也不应该去写它的 not-set 行)
     local c
     for c in CONFIG_KSU_SUSFS=y \
              CONFIG_KSU_SUSFS_SUS_PATH=y \
@@ -621,19 +675,13 @@ stage_defconfig() {
     echo "SUSFS_BRANCH=$SUSFS_BRANCH"
     echo "SUSFS_COMMIT=${SUSFS_COMMIT:-disabled}"
     echo "SUSFS_PIN=${SUSFS_PIN:-none}"
-    # NoMount 由 BakaSU 内核自带 (kernel/nomount/), 没有独立开关; 这里记录它是否真的
-    # 进了树, 便于 release notes 与排障 (drivers/kernelsu -> BakaSU/kernel 的整目录软链接)
-    if [ -f "$COMMON/drivers/kernelsu/nomount/nomount.c" ]; then
-      echo "NOMOUNT=builtin"
-      # nomount.h: #define NOMOUNT_BASE_VERSION "22" -> 22
-      echo "NOMOUNT_VERSION=$(grep -m1 '^#define NOMOUNT_BASE_VERSION' \
-        "$COMMON/drivers/kernelsu/nomount/nomount.h" | tr -d '"' | awk '{print $3}')"
-      echo "NOMOUNT_SHA256=$(sha256sum "$COMMON/drivers/kernelsu/nomount/nomount.c" | cut -d' ' -f1)"
-    else
-      echo "NOMOUNT=missing"
-      echo "NOMOUNT_VERSION=missing"
-      echo "NOMOUNT_SHA256=missing"
-    fi
+    # BakaSU 内建集成状态 (Built-In)。版本号算法与 BakaSU kernel/Kbuild 一致:
+    # KSU_VERSION = 30000 + <git rev-list --count HEAD> + 700
+    # 上游 BakaSU 已移除 NoMount, 因此不再记录任何 NOMOUNT_* 信息。
+    echo "KSU_INTEGRATION=builtin"
+    echo "KSU_COMMIT_FULL=${KSU_COMMIT_FULL:-unknown}"
+    echo "KSU_VERSION_NAME=${KSU_VERSION_NAME:-unknown}"
+    echo "KSU_DRIVER_VERSION=$((30000 + ${KSU_COUNT:-0} + 700))"
     echo "FUSEBPF=$([ "$ENABLE_FUSEBPF" = 1 ] && echo enabled || echo disabled)"
     echo "UNICODE_BYPASS=$([ "$ENABLE_UNICODE" = 1 ] && echo enabled || echo disabled)"
     echo "ADIOS=$([ "$ENABLE_ADIOS" = 1 ] && echo enabled || echo disabled)"
@@ -647,6 +695,9 @@ stage_defconfig() {
 #  执行
 # ============================================================================
 KSU_COMMIT=""
+KSU_COMMIT_FULL=""
+KSU_VERSION_NAME=""
+KSU_COUNT=0
 SUSFS_COMMIT=""
 
 stage_ksu
@@ -673,9 +724,9 @@ log "================ 集成摘要 ================"
 log "KernelSU : $KSU_REPO @ $KSU_BRANCH ($KSU_COMMIT)"
 [ "$ENABLE_SUSFS" = 1 ]   && log "SUSFS    : $SUSFS_REPO @ $SUSFS_BRANCH ($SUSFS_COMMIT)"
 [ "$ENABLE_FUSEBPF" = 1 ] && log "fusebpf  : third_party/fusebpf (v3, 无运行时开关)"
-log "NoMount  : 由 BakaSU kernel/nomount/ 自带 (随 CONFIG_KSU 内建, 无需单独集成)"
+log "KSU 形态 : Built-In (CONFIG_KSU=y), 钩子方式由 BakaSU Kconfig choice 决定"
 [ "$ENABLE_ADIOS" = 1 ]   && log "ADIOS    : third_party/adios (默认调度器=adios, 锁定=$ADIOS_LOCK)"
 [ "$ENABLE_UNICODE" = 1 ] && log "Unicode  : third_party/unicode_bypass (零宽字符绕过修复)"
 log "内核树改动: $(git -C "$COMMON" status --porcelain | wc -l) 个文件"
 log "========================================="
-ok "BakaSU (含内置 NoMount) + fusebpf + SUSFS + ADIOS + Unicode 集成完成"
+ok "BakaSU (Built-In 内建) + fusebpf + SUSFS + ADIOS + Unicode 集成完成"
